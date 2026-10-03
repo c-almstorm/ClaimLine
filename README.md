@@ -15,9 +15,12 @@
 
 ## ⚠️ Protocol Limits & Invariants
 
-1. **Non-Transferable Position Tokens in v1:** In v1, ERC-1155 position tokens are non-transferable receipts for lenders. This eliminates race conditions and accumulator desynchronization vulnerabilities across transfers, preserving strict pull-based claim safety.
-2. **Cap at 32 Locks Per Asset (`MAX_LOCKS = 32`):** Each collateral race accepts at most 32 sequential escrow locks, bounding loop iterations and ensuring low, predictable gas costs during `close()`.
-3. **Capacity Bound by Face Value (`seniorCapacity + juniorCapacity <= faceValue`):** Total leverage across senior and junior tranches cannot exceed the documented collateral asset face value.
+1. **Repayment and Real-World Collateral are Not Enforced On-Chain:** ClaimLine acts as an on-chain priority settlement registry. Legal custody, physical collateral possession, and loan enforcement remain governed off-chain by legal agreements between borrowers, lenders, and custodians.
+2. **Rounding Dust Stays in the Contract:** Due to integer division in proportional distribution calculations, negligible dust remainders (bounded under 10 wei-units / micro-USDC) remain within the contract balance to guarantee complete protocol solvency (`contractBalance >= totalOwed`).
+3. **Non-Transferable Position Tokens in v1:** In v1, ERC-1155 position tokens are non-transferable receipts for lenders. This eliminates race conditions and accumulator desynchronization vulnerabilities across secondary transfers, preserving strict pull-based claim safety.
+4. **Cap at 32 Locks Per Asset (`MAX_LOCKS = 32`):** Each collateral race accepts at most 32 sequential escrow locks, bounding loop iterations and ensuring low, predictable gas costs during `close()`.
+5. **Minimum Lock Requirement (`minLock`):** Assets enforce a minimum lock size `minLock = ceil((seniorCapacity + juniorCapacity) / MAX_LOCKS)` to prevent dust spamming of lock slots.
+6. **Capacity Bound by Face Value (`seniorCapacity + juniorCapacity <= faceValue`):** Total leverage across senior and junior tranches cannot exceed the documented collateral asset face value.
 
 ---
 
@@ -32,10 +35,10 @@
 ### 1. Collateral Asset Registration (`registerAsset`)
 Obligors register collateral under a unique hash:
 $$\text{assetId} = \text{keccak256}(\text{abi.encode}(\text{assetType}, \text{docId}, \text{custodian}, \text{obligor}, \text{faceValue}))$$
-Requires `msg.sender == obligor` and validates `seniorCapacity + juniorCapacity <= faceValue`.
+Requires `msg.sender == obligor` and validates `seniorCapacity + juniorCapacity <= faceValue`. Computes `minLock = ceil((seniorCapacity + juniorCapacity) / 32)`.
 
 ### 2. Sequential Escrow (`lock`)
-Lenders escrow 6-decimal USDC into Senior or Junior tranches. Each lock is stamped with a strictly increasing sequence number ($1, 2, \dots$). Capped at 32 locks per asset.
+Lenders escrow 6-decimal USDC into Senior or Junior tranches (`amount >= minLock`). Each lock is stamped with a strictly increasing sequence number ($1, 2, \dots$). Capped at 32 locks per asset.
 
 ### 3. Settlement & Race Close (`close`)
 Closed by the borrower/obligor (or anyone post-deadline):

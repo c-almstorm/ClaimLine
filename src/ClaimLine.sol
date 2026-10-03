@@ -45,6 +45,7 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
         uint256 juniorCapacity;
         uint256 seniorRepaymentOwed;
         uint256 juniorRepaymentOwed;
+        uint256 minLock;
         uint256 deadline;
         AssetState state;
         uint256 lockCount;
@@ -69,7 +70,7 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
     }
 
     /// @notice Mapping from assetId to Asset details
-    mapping(bytes32 => Asset) public assets;
+    mapping(bytes32 => Asset) internal _assets;
 
     /// @notice Mapping from assetId to array of lock records (up to MAX_LOCKS)
     mapping(bytes32 => LockRecord[]) public assetLocks;
@@ -94,6 +95,7 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
     error InvalidRepayments();
     error InvalidDeadline();
     error InvalidAmount();
+    error AmountBelowMinLock(bytes32 assetId, uint256 amount, uint256 minLock);
     error UnauthorizedClose();
     error UnauthorizedRegistrar();
     error MaxLocksExceeded(bytes32 assetId);
@@ -113,6 +115,7 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
         uint256 juniorCapacity,
         uint256 seniorRepaymentOwed,
         uint256 juniorRepaymentOwed,
+        uint256 minLock,
         uint256 deadline
     );
 
@@ -160,6 +163,14 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
     }
 
     /**
+     * @notice View function to retrieve full Asset struct
+     * @param assetId Collateral asset ID
+     */
+    function assets(bytes32 assetId) external view returns (Asset memory) {
+        return _assets[assetId];
+    }
+
+    /**
      * @notice Computes deterministic position token ID for ERC-1155 minting
      * @param assetId The identifier of the collateral asset
      * @param tranche Senior or Junior tranche
@@ -186,62 +197,76 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
     ) external returns (bytes32 assetId) {
         if (msg.sender != obligor) revert UnauthorizedRegistrar();
         if (deadline <= block.timestamp) revert InvalidDeadline();
-        if (seniorCapacity == 0 && juniorCapacity == 0) revert InvalidCapacities();
-        if (seniorCapacity + juniorCapacity > faceValue) revert InvalidCapacities();
+
+        uint256 totalCap = seniorCapacity + juniorCapacity;
+        if (totalCap == 0 || totalCap > faceValue) revert InvalidCapacities();
         if (seniorRepaymentOwed < seniorCapacity || juniorRepaymentOwed < juniorCapacity) {
             revert InvalidRepayments();
         }
 
         assetId = keccak256(abi.encode(assetType, docId, custodian, obligor, faceValue));
-        if (assets[assetId].state != AssetState.None) revert AssetAlreadyExists(assetId);
+        Asset storage asset = _assets[assetId];
+        if (asset.state != AssetState.None) revert AssetAlreadyExists(assetId);
 
-        assets[assetId] = Asset({
-            assetId: assetId,
-            borrower: msg.sender,
-            faceValue: faceValue,
-            seniorCapacity: seniorCapacity,
-            juniorCapacity: juniorCapacity,
-            seniorRepaymentOwed: seniorRepaymentOwed,
-            juniorRepaymentOwed: juniorRepaymentOwed,
-            deadline: deadline,
-            state: AssetState.Open,
-            lockCount: 0,
-            totalSeniorAccepted: 0,
-            totalJuniorAccepted: 0,
-            seniorRepaid: 0,
-            juniorRepaid: 0
-        });
+        uint256 minLock = (totalCap + MAX_LOCKS - 1) / MAX_LOCKS;
 
+        asset.assetId = assetId;
+        asset.borrower = msg.sender;
+        asset.faceValue = faceValue;
+        asset.seniorCapacity = seniorCapacity;
+        asset.juniorCapacity = juniorCapacity;
+        asset.seniorRepaymentOwed = seniorRepaymentOwed;
+        asset.juniorRepaymentOwed = juniorRepaymentOwed;
+        asset.minLock = minLock;
+        asset.deadline = deadline;
+        asset.state = AssetState.Open;
+
+        _emitAssetRegistered(assetId, assetType, docId, custodian, obligor, faceValue, minLock);
+    }
+
+    function _emitAssetRegistered(
+        bytes32 assetId,
+        string calldata assetType,
+        string calldata docId,
+        address custodian,
+        address obligor,
+        uint256 faceValue,
+        uint256 minLock
+    ) private {
+        Asset storage a = _assets[assetId];
         emit AssetRegistered(
             assetId,
-            msg.sender,
+            a.borrower,
             assetType,
             docId,
             custodian,
             obligor,
             faceValue,
-            seniorCapacity,
-            juniorCapacity,
-            seniorRepaymentOwed,
-            juniorRepaymentOwed,
-            deadline
+            a.seniorCapacity,
+            a.juniorCapacity,
+            a.seniorRepaymentOwed,
+            a.juniorRepaymentOwed,
+            minLock,
+            a.deadline
         );
     }
 
     /**
      * @notice Lenders escrow USDC for a specific tranche in a sequential race
      * @param assetId Target asset ID
-     * @param amount 6-decimal USDC amount to escrow
+     * @param amount 6-decimal USDC amount to escrow (must be >= asset.minLock)
      * @param tranche Senior or Junior tranche preference
      */
     function lock(bytes32 assetId, uint256 amount, Tranche tranche) external nonReentrant {
-        Asset storage asset = assets[assetId];
+        Asset storage asset = _assets[assetId];
         if (asset.state == AssetState.None) revert AssetNotFound(assetId);
         if (asset.state != AssetState.Open) revert AssetNotOpen(assetId);
         if (block.timestamp > asset.deadline) {
             revert DeadlinePassed(assetId, asset.deadline, block.timestamp);
         }
-        if (amount == 0) revert InvalidAmount();
+        if (amount < asset.minLock) {
+            revert AmountBelowMinLock(assetId, amount, asset.minLock);
+        }
         if (asset.lockCount >= MAX_LOCKS) revert MaxLocksExceeded(assetId);
 
         uint256 seq = ++asset.lockCount;
@@ -264,7 +289,7 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
      * @param assetId Target asset ID
      */
     function close(bytes32 assetId) external nonReentrant {
-        Asset storage asset = assets[assetId];
+        Asset storage asset = _assets[assetId];
         if (asset.state == AssetState.None) revert AssetNotFound(assetId);
         if (asset.state != AssetState.Open) revert AssetNotOpen(assetId);
 
@@ -291,7 +316,7 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
                 if (accepted > 0) {
                     seniorAccepted += accepted;
                     positions[assetId][Tranche.Senior][lender].principalAccepted += accepted;
-                    
+
                     uint256[] memory ids = new uint256[](1);
                     ids[0] = getPositionTokenId(assetId, Tranche.Senior);
                     uint256[] memory values = new uint256[](1);
@@ -358,7 +383,7 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
      * @param amount USDC amount to repay
      */
     function repay(bytes32 assetId, uint256 amount) external nonReentrant {
-        Asset storage asset = assets[assetId];
+        Asset storage asset = _assets[assetId];
         if (asset.state != AssetState.Closed) revert AssetNotClosed(assetId);
         if (amount == 0) revert InvalidAmount();
 
@@ -401,7 +426,7 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
      * @param assetId Target asset ID
      */
     function claim(bytes32 assetId) external nonReentrant {
-        Asset storage asset = assets[assetId];
+        Asset storage asset = _assets[assetId];
         if (asset.state == AssetState.None) revert AssetNotFound(assetId);
 
         uint256 refund = claimableRefunds[assetId][msg.sender];
@@ -465,7 +490,7 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
             uint256 totalClaim
         )
     {
-        Asset storage asset = assets[assetId];
+        Asset storage asset = _assets[assetId];
         refund = claimableRefunds[assetId][account];
         proceeds = claimableProceeds[assetId][account];
 
@@ -505,7 +530,7 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
      * @notice Fetch repaid amounts for an asset
      */
     function getRepayments(bytes32 assetId) external view returns (uint256 seniorRepaid, uint256 juniorRepaid) {
-        return (assets[assetId].seniorRepaid, assets[assetId].juniorRepaid);
+        return (_assets[assetId].seniorRepaid, _assets[assetId].juniorRepaid);
     }
 
     /**

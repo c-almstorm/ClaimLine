@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import "forge-std/Test.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "../src/ClaimLine.sol";
 
 contract MockUSDC is IERC20 {
@@ -17,7 +18,7 @@ contract MockUSDC is IERC20 {
         isBlocklisted[account] = value;
     }
 
-    function transfer(address to, uint256 amount) external returns (bool) {
+    function transfer(address to, uint256 amount) external virtual returns (bool) {
         require(!isBlocklisted[msg.sender], "USDC: sender blocklisted");
         require(!isBlocklisted[to], "USDC: recipient blocklisted");
         require(balanceOf[msg.sender] >= amount, "ERC20: transfer amount exceeds balance");
@@ -33,7 +34,7 @@ contract MockUSDC is IERC20 {
         return true;
     }
 
-    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+    function transferFrom(address from, address to, uint256 amount) external virtual returns (bool) {
         require(!isBlocklisted[from], "USDC: sender blocklisted");
         require(!isBlocklisted[to], "USDC: recipient blocklisted");
         require(balanceOf[from] >= amount, "ERC20: transfer amount exceeds balance");
@@ -51,6 +52,40 @@ contract MockUSDC is IERC20 {
         totalSupply += amount;
         balanceOf[to] += amount;
         emit Transfer(address(0), to, amount);
+    }
+}
+
+/**
+ * @notice Malicious ERC-20 that attempts reentrancy during transfer
+ */
+contract ReentrantMockUSDC is MockUSDC {
+    ClaimLine public targetClaimLine;
+    bytes32 public targetAssetId;
+    bool public reentrancyEnabled;
+
+    function setTarget(address _claimLine, bytes32 _assetId) external {
+        targetClaimLine = ClaimLine(_claimLine);
+        targetAssetId = _assetId;
+    }
+
+    function setReentrancy(bool enabled) external {
+        reentrancyEnabled = enabled;
+    }
+
+    function transfer(address to, uint256 amount) external override returns (bool) {
+        require(!isBlocklisted[msg.sender], "USDC: sender blocklisted");
+        require(!isBlocklisted[to], "USDC: recipient blocklisted");
+        require(balanceOf[msg.sender] >= amount, "ERC20: transfer amount exceeds balance");
+
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+        emit Transfer(msg.sender, to, amount);
+
+        if (reentrancyEnabled && msg.sender == address(targetClaimLine)) {
+            // Attempt to re-enter claim() while inside transfer
+            targetClaimLine.claim(targetAssetId);
+        }
+        return true;
     }
 }
 
@@ -81,35 +116,6 @@ contract NonReceiverLender {
     }
 }
 
-contract ReentrancyAttacker {
-    ClaimLine public claimLine;
-    bytes32 public targetAsset;
-    bool public attacking;
-
-    constructor(address _claimLine) {
-        claimLine = ClaimLine(_claimLine);
-    }
-
-    function attackClaim(bytes32 assetId) external {
-        targetAsset = assetId;
-        attacking = true;
-        claimLine.claim(assetId);
-    }
-
-    function onERC1155Received(
-        address,
-        address,
-        uint256,
-        uint256,
-        bytes calldata
-    ) external returns (bytes4) {
-        if (attacking) {
-            claimLine.claim(targetAsset);
-        }
-        return this.onERC1155Received.selector;
-    }
-}
-
 contract ClaimLineTest is Test {
     ClaimLine public claimLine;
     MockUSDC public usdc;
@@ -128,12 +134,14 @@ contract ClaimLineTest is Test {
     uint256 public constant SENIOR_REPAY = 66_000 * 1e6;
     uint256 public constant JUNIOR_REPAY = 36_000 * 1e6;
     uint256 public deadline;
+    uint256 public expectedMinLock;
 
     function setUp() public {
         usdc = new MockUSDC();
         claimLine = new ClaimLine(address(usdc));
 
         deadline = block.timestamp + 7 days;
+        expectedMinLock = (SENIOR_CAP + JUNIOR_CAP + 31) / 32; // (90,000 * 1e6 + 31) / 32 = 2,812,500,000 (2812.5 USDC)
 
         usdc.mint(lender1, 1_000_000 * 1e6);
         usdc.mint(lender2, 1_000_000 * 1e6);
@@ -208,7 +216,7 @@ contract ClaimLineTest is Test {
         NonReceiverLender nonReceiver = new NonReceiverLender(address(claimLine), address(usdc));
         usdc.mint(address(nonReceiver), 50_000 * 1e6);
 
-        // NonReceiver locks capital
+        // NonReceiver locks capital (amount >= minLock)
         nonReceiver.lock(testAssetId, 50_000 * 1e6, ClaimLine.Tranche.Senior);
 
         // Close race - mints position token without calling onERC1155Received
@@ -246,12 +254,12 @@ contract ClaimLineTest is Test {
         vm.prank(obligor);
         claimLine.close(testAssetId);
 
-        (,,,,, uint256 sRepayOwed, uint256 jRepayOwed,,,,,,,) = claimLine.assets(testAssetId);
+        ClaimLine.Asset memory a = claimLine.assets(testAssetId);
 
         // Senior scaled repayment owed: 66k * 30k / 60k = 33k
-        assertEq(sRepayOwed, 33_000 * 1e6);
+        assertEq(a.seniorRepaymentOwed, 33_000 * 1e6);
         // Junior scaled repayment owed: 36k * 15k / 30k = 18k
-        assertEq(jRepayOwed, 18_000 * 1e6);
+        assertEq(a.juniorRepaymentOwed, 18_000 * 1e6);
 
         // Repay 40k: 33k satisfies Senior in full; 7k flows to Junior
         vm.prank(obligor);
@@ -267,37 +275,23 @@ contract ClaimLineTest is Test {
     // ==========================================
 
     function test_RegisterAsset_Success() public view {
-        (
-            bytes32 id,
-            address b,
-            uint256 fv,
-            uint256 sCap,
-            uint256 jCap,
-            uint256 sRepay,
-            uint256 jRepay,
-            uint256 dl,
-            ClaimLine.AssetState state,
-            uint256 lockCount,
-            uint256 sAcc,
-            uint256 jAcc,
-            uint256 sRepaid,
-            uint256 jRepaid
-        ) = claimLine.assets(testAssetId);
+        ClaimLine.Asset memory a = claimLine.assets(testAssetId);
 
-        assertEq(id, testAssetId);
-        assertEq(b, obligor);
-        assertEq(fv, FACE_VALUE);
-        assertEq(sCap, SENIOR_CAP);
-        assertEq(jCap, JUNIOR_CAP);
-        assertEq(sRepay, SENIOR_REPAY);
-        assertEq(jRepay, JUNIOR_REPAY);
-        assertEq(dl, deadline);
-        assertEq(uint256(state), uint256(ClaimLine.AssetState.Open));
-        assertEq(lockCount, 0);
-        assertEq(sAcc, 0);
-        assertEq(jAcc, 0);
-        assertEq(sRepaid, 0);
-        assertEq(jRepaid, 0);
+        assertEq(a.assetId, testAssetId);
+        assertEq(a.borrower, obligor);
+        assertEq(a.faceValue, FACE_VALUE);
+        assertEq(a.seniorCapacity, SENIOR_CAP);
+        assertEq(a.juniorCapacity, JUNIOR_CAP);
+        assertEq(a.seniorRepaymentOwed, SENIOR_REPAY);
+        assertEq(a.juniorRepaymentOwed, JUNIOR_REPAY);
+        assertEq(a.minLock, expectedMinLock);
+        assertEq(a.deadline, deadline);
+        assertEq(uint256(a.state), uint256(ClaimLine.AssetState.Open));
+        assertEq(a.lockCount, 0);
+        assertEq(a.totalSeniorAccepted, 0);
+        assertEq(a.totalJuniorAccepted, 0);
+        assertEq(a.seniorRepaid, 0);
+        assertEq(a.juniorRepaid, 0);
     }
 
     function test_RegisterAsset_Revert_Duplicate() public {
@@ -368,15 +362,26 @@ contract ClaimLineTest is Test {
         assertEq(locks[2].sequenceNumber, 3);
     }
 
+    function test_Lock_Revert_AmountBelowMinLock() public {
+        // minLock is 2,812.50 USDC (2812500000)
+        uint256 subMinAmount = 2_000 * 1e6;
+        vm.prank(lender1);
+        vm.expectRevert(
+            abi.encodeWithSelector(ClaimLine.AmountBelowMinLock.selector, testAssetId, subMinAmount, expectedMinLock)
+        );
+        claimLine.lock(testAssetId, subMinAmount, ClaimLine.Tranche.Senior);
+    }
+
     function test_Lock_Revert_MaxLocksExceeded() public {
+        uint256 validLockAmt = 3_000 * 1e6; // >= expectedMinLock
         for (uint256 i = 0; i < 32; i++) {
             vm.prank(lender1);
-            claimLine.lock(testAssetId, 100 * 1e6, ClaimLine.Tranche.Senior);
+            claimLine.lock(testAssetId, validLockAmt, ClaimLine.Tranche.Senior);
         }
 
         vm.prank(lender1);
         vm.expectRevert(abi.encodeWithSelector(ClaimLine.MaxLocksExceeded.selector, testAssetId));
-        claimLine.lock(testAssetId, 100 * 1e6, ClaimLine.Tranche.Senior);
+        claimLine.lock(testAssetId, validLockAmt, ClaimLine.Tranche.Senior);
     }
 
     function test_Lock_Revert_DeadlinePassed() public {
@@ -385,7 +390,7 @@ contract ClaimLineTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(ClaimLine.DeadlinePassed.selector, testAssetId, deadline, deadline + 1)
         );
-        claimLine.lock(testAssetId, 100 * 1e6, ClaimLine.Tranche.Senior);
+        claimLine.lock(testAssetId, 3_000 * 1e6, ClaimLine.Tranche.Senior);
     }
 
     function test_Close_BorrowerCanCloseBeforeDeadline() public {
@@ -416,8 +421,8 @@ contract ClaimLineTest is Test {
         vm.prank(lender3);
         claimLine.close(testAssetId);
 
-        (,,,,,,,, ClaimLine.AssetState state,,,,,) = claimLine.assets(testAssetId);
-        assertEq(uint256(state), uint256(ClaimLine.AssetState.Closed));
+        ClaimLine.Asset memory a = claimLine.assets(testAssetId);
+        assertEq(uint256(a.state), uint256(ClaimLine.AssetState.Closed));
     }
 
     function test_Close_Revert_NonBorrowerBeforeDeadline() public {
@@ -436,6 +441,56 @@ contract ClaimLineTest is Test {
         vm.prank(obligor);
         vm.expectRevert(abi.encodeWithSelector(ClaimLine.AssetNotOpen.selector, testAssetId));
         claimLine.close(testAssetId);
+    }
+
+    function test_Close_32Locks_GasBenchmark() public {
+        // Set up fresh asset for 32 distinct locks
+        uint256 faceVal = 64_000 * 1e6;
+        uint256 sCap = 32_000 * 1e6;
+        uint256 jCap = 32_000 * 1e6;
+        uint256 sRep = 35_200 * 1e6;
+        uint256 jRep = 38_400 * 1e6;
+
+        vm.prank(obligor);
+        bytes32 asset32 = claimLine.registerAsset(
+            "Equipment",
+            "EQ-32-LOCKS",
+            custodian,
+            obligor,
+            faceVal,
+            sCap,
+            jCap,
+            sRep,
+            jRep,
+            deadline
+        );
+
+        uint256 singleLock = 2_000 * 1e6; // 64,000 / 32 = 2,000 USDC >= minLock
+
+        for (uint256 i = 0; i < 32; i++) {
+            address l = address(uint160(0x5000 + i));
+            usdc.mint(l, singleLock);
+            vm.prank(l);
+            usdc.approve(address(claimLine), type(uint256).max);
+
+            ClaimLine.Tranche t = (i < 16) ? ClaimLine.Tranche.Senior : ClaimLine.Tranche.Junior;
+            vm.prank(l);
+            claimLine.lock(asset32, singleLock, t);
+        }
+
+        // Measure gas of close() with 32 full locks
+        uint256 gasStart = gasleft();
+        vm.prank(obligor);
+        claimLine.close(asset32);
+        uint256 gasUsed = gasStart - gasleft();
+
+        emit log_named_uint("Gas used for close() with 32 locks", gasUsed);
+
+        ClaimLine.Asset memory a = claimLine.assets(asset32);
+        assertEq(uint256(a.state), uint256(ClaimLine.AssetState.Closed));
+        assertEq(a.lockCount, 32);
+        assertEq(a.totalSeniorAccepted, sCap);
+        assertEq(a.totalJuniorAccepted, jCap);
     }
 
     function test_Repayment_Waterfall_SeniorFirst() public {
@@ -479,12 +534,135 @@ contract ClaimLineTest is Test {
         claimLine.claim(testAssetId);
         uint256 lender2Post = usdc.balanceOf(lender2);
 
-        // Refund 20k + 50% of 20k/60k * 33k (11k) = 31k
+        // Refund 20k + 20k/60k * 33k (11k) = 31k
         assertEq(lender2Post - lender2Pre, 31_000 * 1e6);
+    }
 
+    function test_Claim_CannotBeClaimedTwice() public {
+        vm.prank(lender1);
+        claimLine.lock(testAssetId, 40_000 * 1e6, ClaimLine.Tranche.Senior);
+        vm.prank(lender2);
+        claimLine.lock(testAssetId, 40_000 * 1e6, ClaimLine.Tranche.Senior);
+
+        vm.prank(obligor);
+        claimLine.close(testAssetId);
+
+        vm.prank(obligor);
+        claimLine.repay(testAssetId, 33_000 * 1e6);
+
+        // First claim succeeds
+        vm.prank(lender2);
+        claimLine.claim(testAssetId);
+
+        // Second claim reverts with NothingToClaim
         vm.prank(lender2);
         vm.expectRevert(ClaimLine.NothingToClaim.selector);
         claimLine.claim(testAssetId);
+    }
+
+    function test_Dust_AllParticipantsClaim() public {
+        // Register asset with odd non-round numbers to test dust remainders
+        uint256 faceVal = 100_000 * 1e6;
+        uint256 sCap = 50_000 * 1e6;
+        uint256 jCap = 30_000 * 1e6;
+        uint256 sRep = 55_000 * 1e6;
+        uint256 jRep = 36_000 * 1e6;
+
+        vm.prank(obligor);
+        bytes32 dustAsset = claimLine.registerAsset(
+            "Invoice",
+            "INV-DUST",
+            custodian,
+            obligor,
+            faceVal,
+            sCap,
+            jCap,
+            sRep,
+            jRep,
+            deadline
+        );
+
+        address l1 = address(0x701);
+        address l2 = address(0x702);
+        address l3 = address(0x703);
+        address l4 = address(0x704);
+
+        // Locks: l1 (33,333.333333 USDC Senior), l2 (25,000 USDC Senior - partial overflow), l3 (17,777.777777 USDC Junior), l4 (20,000 USDC Junior)
+        uint256 lock1 = 33_333_333333;
+        uint256 lock2 = 25_000_000000;
+        uint256 lock3 = 17_777_777777;
+        uint256 lock4 = 20_000_000000;
+
+        usdc.mint(l1, lock1);
+        usdc.mint(l2, lock2);
+        usdc.mint(l3, lock3);
+        usdc.mint(l4, lock4);
+
+        vm.prank(l1);
+        usdc.approve(address(claimLine), type(uint256).max);
+        vm.prank(l2);
+        usdc.approve(address(claimLine), type(uint256).max);
+        vm.prank(l3);
+        usdc.approve(address(claimLine), type(uint256).max);
+        vm.prank(l4);
+        usdc.approve(address(claimLine), type(uint256).max);
+
+        vm.prank(l1);
+        claimLine.lock(dustAsset, lock1, ClaimLine.Tranche.Senior);
+        vm.prank(l2);
+        claimLine.lock(dustAsset, lock2, ClaimLine.Tranche.Senior);
+        vm.prank(l3);
+        claimLine.lock(dustAsset, lock3, ClaimLine.Tranche.Junior);
+        vm.prank(l4);
+        claimLine.lock(dustAsset, lock4, ClaimLine.Tranche.Junior);
+
+        // Close race
+        vm.prank(obligor);
+        claimLine.close(dustAsset);
+
+        // Repay partial debt: 67,891.123456 USDC
+        uint256 repayAmt = 67_891_123456;
+        usdc.mint(obligor, repayAmt);
+        vm.prank(obligor);
+        claimLine.repay(dustAsset, repayAmt);
+
+        uint256 totalPaidIn = lock1 + lock2 + lock3 + lock4 + repayAmt;
+
+        // Everyone claims
+        uint256 bPre = usdc.balanceOf(obligor);
+        vm.prank(obligor);
+        claimLine.claim(dustAsset);
+        uint256 bPaid = usdc.balanceOf(obligor) - bPre;
+
+        uint256 l1Pre = usdc.balanceOf(l1);
+        vm.prank(l1);
+        claimLine.claim(dustAsset);
+        uint256 l1Paid = usdc.balanceOf(l1) - l1Pre;
+
+        uint256 l2Pre = usdc.balanceOf(l2);
+        vm.prank(l2);
+        claimLine.claim(dustAsset);
+        uint256 l2Paid = usdc.balanceOf(l2) - l2Pre;
+
+        uint256 l3Pre = usdc.balanceOf(l3);
+        vm.prank(l3);
+        claimLine.claim(dustAsset);
+        uint256 l3Paid = usdc.balanceOf(l3) - l3Pre;
+
+        uint256 l4Pre = usdc.balanceOf(l4);
+        vm.prank(l4);
+        claimLine.claim(dustAsset);
+        uint256 l4Paid = usdc.balanceOf(l4) - l4Pre;
+
+        uint256 totalPaidOut = bPaid + l1Paid + l2Paid + l3Paid + l4Paid;
+        uint256 contractLeftoverDust = usdc.balanceOf(address(claimLine));
+
+        // 1. Total paid out must not exceed total paid in
+        assertTrue(totalPaidOut <= totalPaidIn, "Overpayment occurred!");
+        // 2. Exact conservation of funds: totalPaidIn - totalPaidOut == contract dust
+        assertEq(totalPaidIn - totalPaidOut, contractLeftoverDust);
+        // 3. Leftover dust is bounded under 10 wei units (micro-USDC)
+        assertTrue(contractLeftoverDust < 10, "Dust exceeds 10 wei units!");
     }
 
     function test_ERC1155_NonTransferable_InV1() public {
@@ -508,11 +686,12 @@ contract ClaimLineTest is Test {
         uint32 lockAmt1,
         uint32 lockAmt2,
         uint32 lockAmt3,
-        uint32 repayAmt
+        uint128 repayMicroUSDC
     ) public {
-        vm.assume(lockAmt1 > 100 && lockAmt1 < 50_000_000);
-        vm.assume(lockAmt2 > 100 && lockAmt2 < 50_000_000);
-        vm.assume(lockAmt3 > 100 && lockAmt3 < 50_000_000);
+        // Enforce lock amounts >= minLock and within reasonable test bounds
+        vm.assume(lockAmt1 >= 3_000 && lockAmt1 < 50_000_000);
+        vm.assume(lockAmt2 >= 3_000 && lockAmt2 < 50_000_000);
+        vm.assume(lockAmt3 >= 3_000 && lockAmt3 < 50_000_000);
 
         uint256 l1 = uint256(lockAmt1) * 1e6;
         uint256 l2 = uint256(lockAmt2) * 1e6;
@@ -532,7 +711,12 @@ contract ClaimLineTest is Test {
         vm.prank(obligor);
         claimLine.close(testAssetId);
 
-        uint256 rAmt = (uint256(repayAmt) % (SENIOR_REPAY + JUNIOR_REPAY + 1)) * 1e6;
+        ClaimLine.Asset memory a = claimLine.assets(testAssetId);
+        uint256 maxRepayOwed = a.seniorRepaymentOwed + a.juniorRepaymentOwed;
+
+        // Bound repay amount to [0, seniorRepaymentOwed + juniorRepaymentOwed] in micro-USDC
+        uint256 rAmt = maxRepayOwed == 0 ? 0 : uint256(repayMicroUSDC) % (maxRepayOwed + 1);
+
         if (rAmt > 0) {
             usdc.mint(obligor, rAmt);
             vm.prank(obligor);
@@ -552,9 +736,10 @@ contract ClaimLineTest is Test {
         assertTrue(contractBalance >= totalOwed, "Contract holds less than it owes!");
     }
 
-    function testFuzz_Invariant_SeniorAlwaysPaidBeforeJunior(uint32 repayAmount) public {
-        vm.assume(repayAmount > 0 && repayAmount <= 200_000);
-        uint256 rAmt = uint256(repayAmount) * 1e6;
+    function testFuzz_Invariant_SeniorAlwaysPaidBeforeJunior(uint128 repayMicroUSDC) public {
+        uint256 maxRepay = SENIOR_REPAY + JUNIOR_REPAY;
+        uint256 rAmt = uint256(repayMicroUSDC) % (maxRepay + 1);
+        vm.assume(rAmt > 0);
 
         vm.prank(lender1);
         claimLine.lock(testAssetId, SENIOR_CAP, ClaimLine.Tranche.Senior);
@@ -582,28 +767,56 @@ contract ClaimLineTest is Test {
     }
 
     // ==========================================
-    // 4. ATTACK TESTS
+    // 4. ATTACK & REENTRANCY TESTS
     // ==========================================
 
-    function test_Attack_ReentrancyOnClaim() public {
-        ReentrancyAttacker atk = new ReentrancyAttacker(address(claimLine));
-        usdc.mint(address(atk), 50_000 * 1e6);
+    function test_Attack_CallbackTokenReentrancy() public {
+        // Deploy reentrant token and new ClaimLine instance
+        ReentrantMockUSDC rUsdc = new ReentrantMockUSDC();
+        ClaimLine rClaimLine = new ClaimLine(address(rUsdc));
 
-        vm.prank(address(atk));
-        usdc.approve(address(claimLine), type(uint256).max);
+        address testObligor = address(0x999);
+        address testLender = address(0x888);
 
-        vm.prank(address(atk));
-        claimLine.lock(testAssetId, 50_000 * 1e6, ClaimLine.Tranche.Senior);
+        rUsdc.mint(testObligor, 1_000_000 * 1e6);
+        rUsdc.mint(testLender, 1_000_000 * 1e6);
 
-        vm.prank(obligor);
-        claimLine.close(testAssetId);
+        vm.prank(testObligor);
+        rUsdc.approve(address(rClaimLine), type(uint256).max);
+        vm.prank(testLender);
+        rUsdc.approve(address(rClaimLine), type(uint256).max);
 
-        vm.prank(obligor);
-        claimLine.repay(testAssetId, 55_000 * 1e6);
+        vm.prank(testObligor);
+        bytes32 rAssetId = rClaimLine.registerAsset(
+            "Invoice",
+            "INV-REENTRANCY",
+            custodian,
+            testObligor,
+            100_000 * 1e6,
+            60_000 * 1e6,
+            30_000 * 1e6,
+            66_000 * 1e6,
+            36_000 * 1e6,
+            deadline
+        );
 
-        vm.prank(address(atk));
-        atk.attackClaim(testAssetId);
+        rUsdc.setTarget(address(rClaimLine), rAssetId);
 
-        assertEq(usdc.balanceOf(address(atk)), 55_000 * 1e6);
+        vm.prank(testLender);
+        rClaimLine.lock(rAssetId, 60_000 * 1e6, ClaimLine.Tranche.Senior);
+
+        vm.prank(testObligor);
+        rClaimLine.close(rAssetId);
+
+        vm.prank(testObligor);
+        rClaimLine.repay(rAssetId, 66_000 * 1e6);
+
+        // Enable reentrancy callback during USDC transfer
+        rUsdc.setReentrancy(true);
+
+        // Attempting to claim with malicious token callback will trigger ReentrancyGuard revert
+        vm.prank(testLender);
+        vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
+        rClaimLine.claim(rAssetId);
     }
 }
