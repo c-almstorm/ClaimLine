@@ -10,7 +10,8 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
  * @title ClaimLine
  * @notice Lien-priority registry on Arc Network with tranche waterfall settlement.
  * @dev Interacts exclusively with Arc native USDC via its 6-decimal ERC-20 interface.
- *      Withdrawals (refunds and repayments) are strictly pull-based.
+ *      Withdrawals (refunds, borrower proceeds, and repayments) are strictly pull-based.
+ *      Position tokens are minted directly via `_update` to prevent receiver hook reverts.
  *      In v1, ERC-1155 position tokens are non-transferable to guarantee safe accumulator accounting.
  */
 contract ClaimLine is ERC1155, ReentrancyGuard {
@@ -76,6 +77,9 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
     /// @notice Mapping from assetId => lender => claimable unfilled refund
     mapping(bytes32 => mapping(address => uint256)) public claimableRefunds;
 
+    /// @notice Mapping from assetId => borrower => claimable principal proceeds
+    mapping(bytes32 => mapping(address => uint256)) public claimableProceeds;
+
     /// @notice Mapping from assetId => tranche => lender => Position
     mapping(bytes32 => mapping(Tranche => mapping(address => Position))) public positions;
 
@@ -91,6 +95,7 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
     error InvalidDeadline();
     error InvalidAmount();
     error UnauthorizedClose();
+    error UnauthorizedRegistrar();
     error MaxLocksExceeded(bytes32 assetId);
     error TransfersDisabledInV1();
     error NothingToClaim();
@@ -123,7 +128,9 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
         bytes32 indexed assetId,
         uint256 totalSeniorAccepted,
         uint256 totalJuniorAccepted,
-        uint256 borrowerProceeds
+        uint256 borrowerProceeds,
+        uint256 seniorRepaymentOwedScaled,
+        uint256 juniorRepaymentOwedScaled
     );
 
     event RepaymentMade(
@@ -138,6 +145,7 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
         bytes32 indexed assetId,
         address indexed account,
         uint256 refundAmount,
+        uint256 proceedsAmount,
         uint256 seniorRepaymentAmount,
         uint256 juniorRepaymentAmount,
         uint256 totalClaimed
@@ -162,6 +170,7 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
 
     /**
      * @notice Registers a new asset collateral under unique hash identifier
+     * @dev Requires msg.sender == obligor and seniorCapacity + juniorCapacity <= faceValue
      */
     function registerAsset(
         string calldata assetType,
@@ -175,8 +184,10 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
         uint256 juniorRepaymentOwed,
         uint256 deadline
     ) external returns (bytes32 assetId) {
+        if (msg.sender != obligor) revert UnauthorizedRegistrar();
         if (deadline <= block.timestamp) revert InvalidDeadline();
         if (seniorCapacity == 0 && juniorCapacity == 0) revert InvalidCapacities();
+        if (seniorCapacity + juniorCapacity > faceValue) revert InvalidCapacities();
         if (seniorRepaymentOwed < seniorCapacity || juniorRepaymentOwed < juniorCapacity) {
             revert InvalidRepayments();
         }
@@ -249,7 +260,7 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
     }
 
     /**
-     * @notice Closes the race, fills capacities in strict FIFO sequence order, and issues ERC-1155 position tokens
+     * @notice Closes the race, fills capacities in strict FIFO sequence order, scales debt owed, and credits pull-based proceeds
      * @param assetId Target asset ID
      */
     function close(bytes32 assetId) external nonReentrant {
@@ -280,7 +291,12 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
                 if (accepted > 0) {
                     seniorAccepted += accepted;
                     positions[assetId][Tranche.Senior][lender].principalAccepted += accepted;
-                    _mint(lender, getPositionTokenId(assetId, Tranche.Senior), accepted, "");
+                    
+                    uint256[] memory ids = new uint256[](1);
+                    ids[0] = getPositionTokenId(assetId, Tranche.Senior);
+                    uint256[] memory values = new uint256[](1);
+                    values[0] = accepted;
+                    _update(address(0), lender, ids, values);
                 }
                 if (lockAmt > accepted) {
                     claimableRefunds[assetId][lender] += (lockAmt - accepted);
@@ -291,7 +307,12 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
                 if (accepted > 0) {
                     juniorAccepted += accepted;
                     positions[assetId][Tranche.Junior][lender].principalAccepted += accepted;
-                    _mint(lender, getPositionTokenId(assetId, Tranche.Junior), accepted, "");
+
+                    uint256[] memory ids = new uint256[](1);
+                    ids[0] = getPositionTokenId(assetId, Tranche.Junior);
+                    uint256[] memory values = new uint256[](1);
+                    values[0] = accepted;
+                    _update(address(0), lender, ids, values);
                 }
                 if (lockAmt > accepted) {
                     claimableRefunds[assetId][lender] += (lockAmt - accepted);
@@ -302,12 +323,33 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
         asset.totalSeniorAccepted = seniorAccepted;
         asset.totalJuniorAccepted = juniorAccepted;
 
-        uint256 borrowerProceeds = seniorAccepted + juniorAccepted;
-        if (borrowerProceeds > 0) {
-            usdc.safeTransfer(asset.borrower, borrowerProceeds);
+        // Scale each tranche's repayment owed proportionally by accepted / capacity
+        if (asset.seniorCapacity > 0) {
+            asset.seniorRepaymentOwed = (asset.seniorRepaymentOwed * seniorAccepted) / asset.seniorCapacity;
+        } else {
+            asset.seniorRepaymentOwed = 0;
         }
 
-        emit AssetClosed(assetId, seniorAccepted, juniorAccepted, borrowerProceeds);
+        if (asset.juniorCapacity > 0) {
+            asset.juniorRepaymentOwed = (asset.juniorRepaymentOwed * juniorAccepted) / asset.juniorCapacity;
+        } else {
+            asset.juniorRepaymentOwed = 0;
+        }
+
+        // Pull-based borrower proceeds
+        uint256 borrowerProceeds = seniorAccepted + juniorAccepted;
+        if (borrowerProceeds > 0) {
+            claimableProceeds[assetId][asset.borrower] += borrowerProceeds;
+        }
+
+        emit AssetClosed(
+            assetId,
+            seniorAccepted,
+            juniorAccepted,
+            borrowerProceeds,
+            asset.seniorRepaymentOwed,
+            asset.juniorRepaymentOwed
+        );
     }
 
     /**
@@ -355,7 +397,7 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
     }
 
     /**
-     * @notice Pull-based claim for unaccepted lock refunds and pro-rata waterfall repayments
+     * @notice Pull-based claim for unaccepted refunds, borrower proceeds, and pro-rata waterfall repayments
      * @param assetId Target asset ID
      */
     function claim(bytes32 assetId) external nonReentrant {
@@ -365,6 +407,11 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
         uint256 refund = claimableRefunds[assetId][msg.sender];
         if (refund > 0) {
             claimableRefunds[assetId][msg.sender] = 0;
+        }
+
+        uint256 proceeds = claimableProceeds[assetId][msg.sender];
+        if (proceeds > 0) {
+            claimableProceeds[assetId][msg.sender] = 0;
         }
 
         uint256 seniorPayout = 0;
@@ -393,12 +440,12 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
             }
         }
 
-        uint256 totalClaim = refund + seniorPayout + juniorPayout;
+        uint256 totalClaim = refund + proceeds + seniorPayout + juniorPayout;
         if (totalClaim == 0) revert NothingToClaim();
 
         usdc.safeTransfer(msg.sender, totalClaim);
 
-        emit Claimed(assetId, msg.sender, refund, seniorPayout, juniorPayout, totalClaim);
+        emit Claimed(assetId, msg.sender, refund, proceeds, seniorPayout, juniorPayout, totalClaim);
     }
 
     /**
@@ -407,9 +454,20 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
     function getPendingClaim(
         bytes32 assetId,
         address account
-    ) external view returns (uint256 refund, uint256 seniorPayout, uint256 juniorPayout, uint256 totalClaim) {
+    )
+        external
+        view
+        returns (
+            uint256 refund,
+            uint256 proceeds,
+            uint256 seniorPayout,
+            uint256 juniorPayout,
+            uint256 totalClaim
+        )
+    {
         Asset storage asset = assets[assetId];
         refund = claimableRefunds[assetId][account];
+        proceeds = claimableProceeds[assetId][account];
 
         if (asset.totalSeniorAccepted > 0) {
             Position storage posSenior = positions[assetId][Tranche.Senior][account];
@@ -433,7 +491,7 @@ contract ClaimLine is ERC1155, ReentrancyGuard {
             }
         }
 
-        totalClaim = refund + seniorPayout + juniorPayout;
+        totalClaim = refund + proceeds + seniorPayout + juniorPayout;
     }
 
     /**

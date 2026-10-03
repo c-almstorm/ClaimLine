@@ -8,8 +8,16 @@
 * **Native USDC Settlement:** Uses Arc's native USDC ERC-20 interface (`0x3600000000000000000000000000000000000000`) with standard 6-decimal precision.
 * **Deterministic Priority Order:** Registered collateral assets issue Senior and Junior tranche position tokens based on strict FIFO sequential lock priority.
 * **Strict Senior-First Waterfall:** Repayments prioritize the Senior tranche in full before any capital flows to the Junior tranche.
-* **Pull-Based Claims & Arc Blocklist Safety:** Withdrawals (refunds and repayments) are strictly pull-based (`claim(assetId)`). A blocked or non-responsive address cannot stall or freeze the waterfall for any other participants.
-* **Non-Transferable Position Tokens in v1:** In v1, ERC-1155 position tokens serve as non-transferable (soulbound) receipts for lenders to preserve strict pull-based accumulator integrity without race-condition hazards during transfers.
+* **Pull-Based Claims & Arc Blocklist Safety:** Withdrawals (refunds, borrower proceeds, and lender repayments) are strictly pull-based (`claim(assetId)`). A blocked or non-responsive address cannot stall or freeze the waterfall for any other participants.
+* **Receiver-Safe Minting:** ERC-1155 position tokens are minted via internal accounting `_update` without triggering external receiver hooks (`onERC1155Received`), ensuring smart contract lenders that do not implement token receipts cannot brick settlement.
+
+---
+
+## ⚠️ Protocol Limits & Invariants
+
+1. **Non-Transferable Position Tokens in v1:** In v1, ERC-1155 position tokens are non-transferable receipts for lenders. This eliminates race conditions and accumulator desynchronization vulnerabilities across transfers, preserving strict pull-based claim safety.
+2. **Cap at 32 Locks Per Asset (`MAX_LOCKS = 32`):** Each collateral race accepts at most 32 sequential escrow locks, bounding loop iterations and ensuring low, predictable gas costs during `close()`.
+3. **Capacity Bound by Face Value (`seniorCapacity + juniorCapacity <= faceValue`):** Total leverage across senior and junior tranches cannot exceed the documented collateral asset face value.
 
 ---
 
@@ -22,25 +30,26 @@
 ## 🛠️ Architecture & Core Flows
 
 ### 1. Collateral Asset Registration (`registerAsset`)
-Borrowers register collateral under a unique hash:
+Obligors register collateral under a unique hash:
 $$\text{assetId} = \text{keccak256}(\text{abi.encode}(\text{assetType}, \text{docId}, \text{custodian}, \text{obligor}, \text{faceValue}))$$
-Parameters include Senior capacity, Junior capacity, fixed repayment debts owed, and deadline.
+Requires `msg.sender == obligor` and validates `seniorCapacity + juniorCapacity <= faceValue`.
 
 ### 2. Sequential Escrow (`lock`)
-Lenders escrow 6-decimal USDC into Senior or Junior tranches. Each lock is stamped with a strictly increasing sequence number ($1, 2, \dots$). Capped at 32 locks per asset to guarantee low and bounded gas consumption during settlement.
+Lenders escrow 6-decimal USDC into Senior or Junior tranches. Each lock is stamped with a strictly increasing sequence number ($1, 2, \dots$). Capped at 32 locks per asset.
 
 ### 3. Settlement & Race Close (`close`)
-Closed by the borrower (or anyone post-deadline):
+Closed by the borrower/obligor (or anyone post-deadline):
 * Fills Senior capacity in sequence order; excess is refunded.
 * Fills Junior capacity in sequence order; excess is refunded.
-* Accepted principal is paid to the borrower.
-* Lenders receive ERC-1155 position tokens representing their accepted principal.
+* Scales fixed repayment debts proportionally by $\text{accepted} \div \text{capacity}$.
+* Credits accepted principal to borrower pull-based proceeds.
+* Issues ERC-1155 position tokens directly via `_update`.
 
 ### 4. Waterfall Repayment (`repay`)
 Borrowers or third parties deposit USDC repayments. Repayments satisfy the senior repayment obligation in full before any remainder is credited to the junior tranche.
 
 ### 5. Pull-Based Claim (`claim`)
-Lenders withdraw unaccepted lock refunds and pro-rata shares of senior/junior repayments on demand.
+Lenders and borrowers withdraw unaccepted lock refunds, proceeds, and pro-rata shares of senior/junior repayments on demand.
 
 ---
 
@@ -49,13 +58,6 @@ Lenders withdraw unaccepted lock refunds and pro-rata shares of senior/junior re
 ```bash
 forge test --gas-report
 ```
-
-Suite covers:
-* **Unit tests:** Every state transition and custom error revert.
-* **Invariant fuzz tests:**
-  1. Total USDC in $\equiv$ refunds $+$ payouts $+$ borrower proceeds $+$ contract balance.
-  2. Senior tranche is fully paid before Junior receives any repayment.
-* **Attack tests:** Reentrancy guard validation, double registration protection, and rounding dust solvency.
 
 ---
 
