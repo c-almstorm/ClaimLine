@@ -1,4 +1,7 @@
 import { defineChain, parseAbi, type Chain } from 'viem';
+import { CLAIMLINE_ABI } from './abi/ClaimLineAbi';
+
+export { CLAIMLINE_ABI };
 
 export const arcMainnet = defineChain({
   id: 5042,
@@ -40,7 +43,7 @@ export type ChainConfig = Chain & {
   blockExplorers: {
     default: { name: string; url: string };
   };
-  claimLineAddress: `0x${string}`;
+  claimLineAddress: `0x${string}` | '';
   usdcAddress: `0x${string}`;
   deploymentBlock: bigint;
 };
@@ -60,31 +63,13 @@ export const CHAINS_CONFIG: Record<number, ChainConfig> = {
     blockExplorers: {
       default: { name: 'Arc Explorer', url: 'https://explorer.arc.io' },
     },
-    claimLineAddress: '0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519', // Pending mainnet deploy
+    claimLineAddress: '', // Not deployed yet
     usdcAddress: '0x3600000000000000000000000000000000000000',
     deploymentBlock: 0n,
   },
 };
 
 export const DEFAULT_CHAIN_ID = 5042002;
-
-export const CLAIMLINE_ABI = parseAbi([
-  'function assets(bytes32 assetId) external view returns ((bytes32 assetId, address borrower, uint256 faceValue, uint256 seniorCapacity, uint256 juniorCapacity, uint256 seniorRepaymentOwed, uint256 juniorRepaymentOwed, uint256 minLock, uint256 deadline, uint8 state, uint256 lockCount, uint256 totalSeniorAccepted, uint256 totalJuniorAccepted, uint256 seniorRepaid, uint256 juniorRepaid))',
-  'function getAssetLocks(bytes32 assetId) external view returns ((address lender, uint256 amount, uint8 tranche, uint256 sequenceNumber)[])',
-  'function getPendingClaim(bytes32 assetId, address account) external view returns (uint256 refund, uint256 proceeds, uint256 seniorPayout, uint256 juniorPayout, uint256 totalClaim)',
-  'function getRepayments(bytes32 assetId) external view returns (uint256 seniorRepaid, uint256 juniorRepaid)',
-  'function registerAsset(string assetType, string docId, address custodian, address obligor, uint256 faceValue, uint256 seniorCapacity, uint256 juniorCapacity, uint256 seniorRepaymentOwed, uint256 juniorRepaymentOwed, uint256 deadline) external returns (bytes32)',
-  'function lock(bytes32 assetId, uint256 amount, uint8 tranche) external',
-  'function close(bytes32 assetId) external',
-  'function repay(bytes32 assetId, uint256 amount) external',
-  'function claim(bytes32 assetId) external',
-  'function MAX_LOCKS() external view returns (uint256)',
-  'event AssetRegistered(bytes32 indexed assetId, address indexed borrower, string assetType, string docId, address custodian, address obligor, uint256 faceValue, uint256 seniorCapacity, uint256 juniorCapacity, uint256 seniorRepaymentOwed, uint256 juniorRepaymentOwed, uint256 minLock, uint256 deadline)',
-  'event LockPlaced(bytes32 indexed assetId, address indexed lender, uint8 indexed tranche, uint256 amount, uint256 sequenceNumber)',
-  'event AssetClosed(bytes32 indexed assetId, uint256 totalSeniorAccepted, uint256 totalJuniorAccepted, uint256 borrowerProceeds, uint256 seniorRepaymentOwedScaled, uint256 juniorRepaymentOwedScaled)',
-  'event RepaymentMade(bytes32 indexed assetId, address indexed payer, uint256 amount, uint256 seniorRepaid, uint256 juniorRepaid)',
-  'event Claimed(bytes32 indexed assetId, address indexed account, uint256 refundAmount, uint256 proceedsAmount, uint256 seniorRepaymentAmount, uint256 juniorRepaymentAmount, uint256 totalClaimed)',
-]);
 
 export const ERC20_ABI = parseAbi([
   'function balanceOf(address account) external view returns (uint256)',
@@ -95,3 +80,4 @@ export const ERC20_ABI = parseAbi([
   'event Approval(address indexed owner, address indexed spender, uint256 value)',
   'event Transfer(address indexed from, address indexed to, uint256 value)',
 ]);
+

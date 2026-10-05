@@ -53,7 +53,8 @@ export function App() {
     juniorRepaymentOwed: bigint;
     deadline: bigint;
   }) => {
-    if (!address) return;
+    if (!address || !activeConfig.claimLineAddress) return;
+    const contractAddress = activeConfig.claimLineAddress as `0x${string}`;
     const walletClient = getWalletClient();
     if (!walletClient) throw new Error('Wallet client unavailable');
 
@@ -66,7 +67,7 @@ export function App() {
 
     try {
       const tx = await walletClient.writeContract({
-        address: activeConfig.claimLineAddress,
+        address: contractAddress,
         abi: CLAIMLINE_ABI,
         functionName: 'registerAsset',
         args: [

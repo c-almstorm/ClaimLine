@@ -75,14 +75,20 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Register Asset Button */}
           {address && (
-            <button
-              onClick={onOpenRegisterModal}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm transition-all"
-            >
-              <PlusCircle className="w-4 h-4" />
-              <span className="hidden sm:inline">Register Asset</span>
-              <span className="sm:hidden">Register</span>
-            </button>
+            activeConfig.claimLineAddress ? (
+              <button
+                onClick={onOpenRegisterModal}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm transition-all"
+              >
+                <PlusCircle className="w-4 h-4" />
+                <span className="hidden sm:inline">Register Asset</span>
+                <span className="sm:hidden">Register</span>
+              </button>
+            ) : (
+              <span className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-100 text-slate-400 border border-slate-200">
+                Not deployed yet
+              </span>
+            )
           )}
 
           {/* Wallet State */}

@@ -36,21 +36,31 @@ export const AssetList: React.FC<AssetListProps> = ({
   const fetchAssets = useCallback(async () => {
     try {
       setLoading(true);
+      if (!activeConfig.claimLineAddress) {
+        setAssets([]);
+        return;
+      }
+
       const currentBlock = await publicClient.getBlockNumber();
-      const fromBlock = activeConfig.deploymentBlock > 0n && currentBlock > activeConfig.deploymentBlock
-        ? (currentBlock - activeConfig.deploymentBlock > 100000n ? currentBlock - 50000n : activeConfig.deploymentBlock)
-        : currentBlock > 10000n ? currentBlock - 10000n : 0n;
+      const fromBlock = activeConfig.deploymentBlock > 0n ? activeConfig.deploymentBlock : 0n;
+      const CHUNK_SIZE = 10000n;
+      const allLogs: any[] = [];
+      const eventAbi = parseAbiItem(
+        'event AssetRegistered(bytes32 indexed assetId, address indexed borrower, string assetType, string docId, address custodian, address obligor, uint256 faceValue, uint256 seniorCapacity, uint256 juniorCapacity, uint256 seniorRepaymentOwed, uint256 juniorRepaymentOwed, uint256 minLock, uint256 deadline)'
+      );
 
-      const logs = await publicClient.getLogs({
-        address: activeConfig.claimLineAddress,
-        event: parseAbiItem(
-          'event AssetRegistered(bytes32 indexed assetId, address indexed borrower, string assetType, string docId, address custodian, address obligor, uint256 faceValue, uint256 seniorCapacity, uint256 juniorCapacity, uint256 seniorRepaymentOwed, uint256 juniorRepaymentOwed, uint256 minLock, uint256 deadline)'
-        ),
-        fromBlock,
-        toBlock: 'latest',
-      });
+      for (let start = fromBlock; start <= currentBlock; start += CHUNK_SIZE) {
+        const end = start + CHUNK_SIZE - 1n > currentBlock ? currentBlock : start + CHUNK_SIZE - 1n;
+        const chunkLogs = await publicClient.getLogs({
+          address: activeConfig.claimLineAddress,
+          event: eventAbi,
+          fromBlock: start,
+          toBlock: end,
+        });
+        allLogs.push(...chunkLogs);
+      }
 
-      const parsed: DiscoveredAsset[] = logs.map((log: any) => ({
+      const parsed: DiscoveredAsset[] = allLogs.map((log: any) => ({
         assetId: log.args.assetId,
         borrower: log.args.borrower,
         assetType: log.args.assetType || 'Invoice',
@@ -135,6 +145,13 @@ export const AssetList: React.FC<AssetListProps> = ({
       <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
         {loading && assets.length === 0 ? (
           <div className="py-8 text-center text-xs text-slate-400">Discovering on-chain assets...</div>
+        ) : !activeConfig.claimLineAddress ? (
+          <div className="py-8 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200 p-4">
+            <p className="text-xs text-slate-500 mb-2 font-medium">Contract is not deployed yet on {activeConfig.name}.</p>
+            <span className="inline-block px-3 py-1 rounded bg-slate-200 text-slate-600 text-xs font-semibold">
+              Not deployed yet
+            </span>
+          </div>
         ) : assets.length === 0 ? (
           <div className="py-8 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200 p-4">
             <p className="text-xs text-slate-500 mb-3">No assets discovered yet on this network.</p>

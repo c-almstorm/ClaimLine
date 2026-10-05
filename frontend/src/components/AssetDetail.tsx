@@ -85,6 +85,14 @@ export const AssetDetail: React.FC<AssetDetailProps> = ({
   const [repayAmountUSDC, setRepayAmountUSDC] = useState<string>('');
 
   const fetchAssetDetails = useCallback(async () => {
+    if (!activeConfig.claimLineAddress) {
+      setAsset(null);
+      setLocks([]);
+      setPendingClaim(null);
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
       const [rawAsset, rawLocks] = await Promise.all([
@@ -163,6 +171,8 @@ export const AssetDetail: React.FC<AssetDetailProps> = ({
   // Helper for USDC Allowance & Approval
   const ensureAllowance = async (amount: bigint) => {
     if (!userAddress) throw new Error('Wallet not connected');
+    if (!activeConfig.claimLineAddress) throw new Error('Contract not deployed on this network');
+    const contractAddress = activeConfig.claimLineAddress as `0x${string}`;
     const walletClient = getWalletClient();
     if (!walletClient) throw new Error('Wallet not available');
 
@@ -170,7 +180,7 @@ export const AssetDetail: React.FC<AssetDetailProps> = ({
       address: activeConfig.usdcAddress,
       abi: ERC20_ABI,
       functionName: 'allowance',
-      args: [userAddress, activeConfig.claimLineAddress],
+      args: [userAddress, contractAddress],
     })) as bigint;
 
     if (currentAllowance < amount) {
@@ -185,7 +195,7 @@ export const AssetDetail: React.FC<AssetDetailProps> = ({
         address: activeConfig.usdcAddress,
         abi: ERC20_ABI,
         functionName: 'approve',
-        args: [activeConfig.claimLineAddress, maxUint256],
+        args: [contractAddress, maxUint256],
         account: userAddress,
         chain: activeConfig,
       });
@@ -203,7 +213,8 @@ export const AssetDetail: React.FC<AssetDetailProps> = ({
   // Action: Place Lock
   const handleLock = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!userAddress || !asset) return;
+    if (!userAddress || !asset || !activeConfig.claimLineAddress) return;
+    const contractAddress = activeConfig.claimLineAddress as `0x${string}`;
 
     try {
       const lockAmount = parseUnits(lockAmountUSDC, 6);
@@ -226,7 +237,7 @@ export const AssetDetail: React.FC<AssetDetailProps> = ({
       }));
 
       const tx = await walletClient.writeContract({
-        address: activeConfig.claimLineAddress,
+        address: contractAddress,
         abi: CLAIMLINE_ABI,
         functionName: 'lock',
         args: [assetId, lockAmount, lockTranche],
@@ -267,7 +278,8 @@ export const AssetDetail: React.FC<AssetDetailProps> = ({
 
   // Action: Close Race
   const handleClose = async () => {
-    if (!userAddress || !asset) return;
+    if (!userAddress || !asset || !activeConfig.claimLineAddress) return;
+    const contractAddress = activeConfig.claimLineAddress as `0x${string}`;
 
     try {
       const walletClient = getWalletClient();
@@ -281,7 +293,7 @@ export const AssetDetail: React.FC<AssetDetailProps> = ({
       });
 
       const tx = await walletClient.writeContract({
-        address: activeConfig.claimLineAddress,
+        address: contractAddress,
         abi: CLAIMLINE_ABI,
         functionName: 'close',
         args: [assetId],
@@ -321,7 +333,8 @@ export const AssetDetail: React.FC<AssetDetailProps> = ({
   // Action: Repay
   const handleRepay = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!userAddress || !asset) return;
+    if (!userAddress || !asset || !activeConfig.claimLineAddress) return;
+    const contractAddress = activeConfig.claimLineAddress as `0x${string}`;
 
     try {
       const repayAmount = parseUnits(repayAmountUSDC, 6);
@@ -341,7 +354,7 @@ export const AssetDetail: React.FC<AssetDetailProps> = ({
       }));
 
       const tx = await walletClient.writeContract({
-        address: activeConfig.claimLineAddress,
+        address: contractAddress,
         abi: CLAIMLINE_ABI,
         functionName: 'repay',
         args: [assetId, repayAmount],
@@ -382,7 +395,8 @@ export const AssetDetail: React.FC<AssetDetailProps> = ({
 
   // Action: Claim
   const handleClaim = async () => {
-    if (!userAddress || !asset) return;
+    if (!userAddress || !asset || !activeConfig.claimLineAddress) return;
+    const contractAddress = activeConfig.claimLineAddress as `0x${string}`;
 
     try {
       const walletClient = getWalletClient();
@@ -396,7 +410,7 @@ export const AssetDetail: React.FC<AssetDetailProps> = ({
       });
 
       const tx = await walletClient.writeContract({
-        address: activeConfig.claimLineAddress,
+        address: contractAddress,
         abi: CLAIMLINE_ABI,
         functionName: 'claim',
         args: [assetId],
@@ -432,6 +446,16 @@ export const AssetDetail: React.FC<AssetDetailProps> = ({
       });
     }
   };
+
+  if (!activeConfig.claimLineAddress) {
+    return (
+      <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center">
+        <AlertCircle className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+        <p className="text-sm font-semibold text-slate-900">Contract Not Deployed Yet</p>
+        <p className="text-xs text-slate-500 mt-1">Claimline contract is not configured on {activeConfig.name}. Please switch to Arc Testnet.</p>
+      </div>
+    );
+  }
 
   if (loading && !asset) {
     return (
