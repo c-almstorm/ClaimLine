@@ -1,18 +1,16 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.28;
+pragma solidity 0.8.28;
 
 import "forge-std/Script.sol";
 import "../src/ClaimLine.sol";
 
 contract DeployClaimLine is Script {
-    address public constant ARC_USDC = 0x3600000000000000000000000000000000000000;
-
     function run() external returns (ClaimLine claimLine) {
-        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        address usdcAddress = vm.envAddress("ARC_USDC");
 
-        vm.startBroadcast(deployerPrivateKey);
+        vm.startBroadcast();
 
-        claimLine = new ClaimLine(ARC_USDC);
+        claimLine = new ClaimLine(usdcAddress);
 
         vm.stopBroadcast();
     }

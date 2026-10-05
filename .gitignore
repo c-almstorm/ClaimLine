@@ -16,3 +16,6 @@ out/
 .env*
 .env.*
 !.env.example
+
+# Scratch and temp files
+scratch/

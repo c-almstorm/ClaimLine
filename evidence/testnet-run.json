@@ -1,0 +1,90 @@
+{
+    "network":  "Arc Testnet",
+    "chainId":  5042002,
+    "contractAddress":  "0xeFCBD627341F70AED57d0099B030B06C40516279",
+    "assetId":  "0x5332f8c73598b74c29884a65205f0b258bd3fd337692ed52ccee1d68a9c77691",
+    "explorerContractUrl":  "https://explorer.testnet.arc.io/address/0xeFCBD627341F70AED57d0099B030B06C40516279",
+    "transactions":  {
+                         "deployContract":  {
+                                                "txHash":  "0xda5fda81e5bf51c52931e30062b4991bafadcbd451180fb78925aa734b265110",
+                                                "explorerUrl":  "https://explorer.testnet.arc.io/tx/0xda5fda81e5bf51c52931e30062b4991bafadcbd451180fb78925aa734b265110"
+                                            },
+                         "registerAsset":  {
+                                               "txHash":  "0xd3f2c08288c85ad0c72e3e5f3cf13157ce8f53bf51a2d85248c38c735047a798",
+                                               "explorerUrl":  "https://explorer.testnet.arc.io/tx/0xd3f2c08288c85ad0c72e3e5f3cf13157ce8f53bf51a2d85248c38c735047a798",
+                                               "details":  "FaceValue: 10 USDC, SeniorCap: 6 USDC, JuniorCap: 3 USDC, SeniorRepay: 6.6 USDC, JuniorRepay: 3.6 USDC"
+                                           },
+                         "approveLender1":  {
+                                                "txHash":  "0x3b974665b76af3736d24da5109e484ea23a9ff304f3789ca87788082a11b6fd0",
+                                                "explorerUrl":  "https://explorer.testnet.arc.io/tx/0x3b974665b76af3736d24da5109e484ea23a9ff304f3789ca87788082a11b6fd0"
+                                            },
+                         "approveLender2":  {
+                                                "txHash":  "0x65fe7772d1d80d491113c3f009a556e1ed5e46ad94d653ed48845993c10083ad",
+                                                "explorerUrl":  "https://explorer.testnet.arc.io/tx/0x65fe7772d1d80d491113c3f009a556e1ed5e46ad94d653ed48845993c10083ad"
+                                            },
+                         "approveBorrower":  {
+                                                 "txHash":  "0x679145371c6730dc49eaeb67e71a6c4ed066a1bcdd3530f496cfa4a384e28e73",
+                                                 "explorerUrl":  "https://explorer.testnet.arc.io/tx/0x679145371c6730dc49eaeb67e71a6c4ed066a1bcdd3530f496cfa4a384e28e73"
+                                             },
+                         "lock1_Lender1_Senior":  {
+                                                      "txHash":  "0x016d6cff8a1fc5343ab15bc227252ac5edd37f419e596c3ffc1db0dcac979039",
+                                                      "explorerUrl":  "https://explorer.testnet.arc.io/tx/0x016d6cff8a1fc5343ab15bc227252ac5edd37f419e596c3ffc1db0dcac979039",
+                                                      "amountUSDC":  "4.0",
+                                                      "tranche":  "Senior (Accepted 4.0)"
+                                                  },
+                         "lock2_Lender2_Senior":  {
+                                                      "txHash":  "0xf8745aa32587a6d76f1940cc0ff89c3518f979d66c786b667c97b0e985794814",
+                                                      "explorerUrl":  "https://explorer.testnet.arc.io/tx/0xf8745aa32587a6d76f1940cc0ff89c3518f979d66c786b667c97b0e985794814",
+                                                      "amountUSDC":  "4.0",
+                                                      "tranche":  "Senior (Accepted 2.0, Refund 2.0)"
+                                                  },
+                         "lock3_Lender1_Junior":  {
+                                                      "txHash":  "0x3b397020f5f1671398956d83bd6a7509478c5b8e4293b01816204f9db3b0c9e0",
+                                                      "explorerUrl":  "https://explorer.testnet.arc.io/tx/0x3b397020f5f1671398956d83bd6a7509478c5b8e4293b01816204f9db3b0c9e0",
+                                                      "amountUSDC":  "3.0",
+                                                      "tranche":  "Junior (Accepted 3.0)"
+                                                  },
+                         "closeRace":  {
+                                           "txHash":  "0xcee3929fc0290509b2b72ee2d9932e06a3baf74f733aea1727abb0aec7c00f16",
+                                           "explorerUrl":  "https://explorer.testnet.arc.io/tx/0xcee3929fc0290509b2b72ee2d9932e06a3baf74f733aea1727abb0aec7c00f16",
+                                           "details":  "Senior Accepted: 6.0 USDC, Junior Accepted: 3.0 USDC, Borrower Proceeds: 9.0 USDC"
+                                       },
+                         "repayPartial":  {
+                                              "txHash":  "0x6720deeaf3fb5d41f7e66ca3266b6a37652d23537a36978ccbebfd0840a7ba7f",
+                                              "explorerUrl":  "https://explorer.testnet.arc.io/tx/0x6720deeaf3fb5d41f7e66ca3266b6a37652d23537a36978ccbebfd0840a7ba7f",
+                                              "amountUSDC":  "7.0 (6.6 Senior + 0.4 Junior)"
+                                          },
+                         "claimBorrower":  {
+                                               "txHash":  "0x4d6d9cb07dd7a0dfda45595518ba7d52cf40af7fc015f5748e9b76eefbfc5283",
+                                               "explorerUrl":  "https://explorer.testnet.arc.io/tx/0x4d6d9cb07dd7a0dfda45595518ba7d52cf40af7fc015f5748e9b76eefbfc5283",
+                                               "payoutUSDC":  "9.0"
+                                           },
+                         "claimLender1":  {
+                                              "txHash":  "0xe6aa766f337ff86c5db9181bb87d43cf69c66e0c1eef257fdd658fe2047fba08",
+                                              "explorerUrl":  "https://explorer.testnet.arc.io/tx/0xe6aa766f337ff86c5db9181bb87d43cf69c66e0c1eef257fdd658fe2047fba08",
+                                              "payoutUSDC":  "4.8 (4.4 Senior + 0.4 Junior)"
+                                          },
+                         "claimLender2":  {
+                                              "txHash":  "0x08eaddb2db3505781b5bb5d8c3f9d03a748ec6ee6953d9ddc71b522fd5fdaf02",
+                                              "explorerUrl":  "https://explorer.testnet.arc.io/tx/0x08eaddb2db3505781b5bb5d8c3f9d03a748ec6ee6953d9ddc71b522fd5fdaf02",
+                                              "payoutUSDC":  "4.2 (2.0 Refund + 2.2 Senior)"
+                                          }
+                     },
+    "balances":  {
+                     "borrower":  {
+                                      "address":  "0xd20C2a29445cc4578f62259bF40E6fD7a6A21362",
+                                      "initialUSDC_units":  "19931188 [1.993e7]",
+                                      "finalUSDC_units":  "21907263 [2.19e7]"
+                                  },
+                     "lender1":  {
+                                     "address":  "0x14Bb8797DBA193836fEFdAcc2637fB24f82a22e3",
+                                     "initialUSDC_units":  "20000000 [2e7]",
+                                     "finalUSDC_units":  "17783580 [1.778e7]"
+                                 },
+                     "lender2":  {
+                                     "address":  "0x22Ee8436801C886B47e5b3FCEf2e3bAecCb85fD0",
+                                     "initialUSDC_units":  "20000000 [2e7]",
+                                     "finalUSDC_units":  "20190245 [2.019e7]"
+                                 }
+                 }
+}
