@@ -4,11 +4,22 @@
 
 ---
 
-## 🌐 Live Arc Testnet Deployment & Verification
+## 🌐 Live Arc Deployments & Verification
 
+### 🔵 Arc Mainnet (Chain ID `5042`)
+* **Contract Address:** [`0x6B7731c78B63C86468b0ddAE9C02432cb647d08e`](https://explorer.arc.io/address/0x6b7731c78b63c86468b0ddae9c02432cb647d08e)
+* **Deployment Tx:** [`0x5b048e41cc3900f82c39059b06d8aa3bdca8b039ee75e2c1c72bce9009e5c03e`](https://explorer.arc.io/tx/0x5b048e41cc3900f82c39059b06d8aa3bdca8b039ee75e2c1c72bce9009e5c03e)
+* **Deployment Block:** `24474184`
+* **USDC Token:** `0x3600000000000000000000000000000000000000`
+* **Deployment Record:** [`deployments/mainnet.json`](deployments/mainnet.json)
+
+---
+
+### 🟢 Arc Testnet (Chain ID `5042002`)
 * **Contract Address:** [`0xeFCBD627341F70AED57d0099B030B06C40516279`](https://explorer.testnet.arc.io/address/0xeFCBD627341F70AED57d0099B030B06C40516279)
 * **Status:** Verified (`Pass - Verified` on Blockscout / ArcScan)
 * **Deployment Tx:** [`0xda5fda81e5bf51c52931e30062b4991bafadcbd451180fb78925aa734b265110`](https://explorer.testnet.arc.io/tx/0xda5fda81e5bf51c52931e30062b4991bafadcbd451180fb78925aa734b265110)
+* **Deployment Block:** `65571537`
 * **Evidence File:** [`evidence/testnet-run.json`](evidence/testnet-run.json)
 
 ### Verified Testnet Run Transactions:

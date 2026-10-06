@@ -46,10 +46,8 @@ cast wallet list
 
 Before executing on-chain, simulate the deployment against Arc Mainnet:
 
-```bash
-forge script script/DeployClaimLineMainnet.s.sol:DeployClaimLineMainnet \
-  --rpc-url https://rpc.mainnet.arc.io \
-  -vvv
+```powershell
+forge script script/DeployClaimLineMainnet.s.sol:DeployClaimLineMainnet --rpc-url https://rpc.mainnet.arc.io -vvv
 ```
 
 ### Verified Simulation Benchmark:
@@ -64,13 +62,8 @@ forge script script/DeployClaimLineMainnet.s.sol:DeployClaimLineMainnet \
 
 When ready to deploy, run the broadcast command. Foundry will prompt you interactively in the terminal to enter the password for `claimline-mainnet`:
 
-```bash
-forge script script/DeployClaimLineMainnet.s.sol:DeployClaimLineMainnet \
-  --rpc-url https://rpc.mainnet.arc.io \
-  --account claimline-mainnet \
-  --broadcast \
-  --verify \
-  --verifier-url https://explorer.arc.io/api
+```powershell
+forge script script/DeployClaimLineMainnet.s.sol:DeployClaimLineMainnet --rpc-url https://rpc.mainnet.arc.io --account claimline-mainnet --broadcast --verify --verifier blockscout --verifier-url https://explorer.arc.io/api
 ```
 
 *(Note: Do not pass `--password-file`; type your password when prompted).*
@@ -81,15 +74,8 @@ forge script script/DeployClaimLineMainnet.s.sol:DeployClaimLineMainnet \
 
 If the explorer verification is delayed or needs to be rerun independently after broadcast:
 
-```bash
-forge verify-contract \
-  <DEPLOYED_CLAIMLINE_ADDRESS> \
-  src/ClaimLine.sol:ClaimLine \
-  --verifier-url https://explorer.arc.io/api \
-  --constructor-args $(cast abi-encode "constructor(address)" 0x3600000000000000000000000000000000000000) \
-  --compiler-version 0.8.28 \
-  --optimizer-runs 200 \
-  --chain 5042
+```powershell
+forge verify-contract 0x6B7731c78B63C86468b0ddAE9C02432cb647d08e src/ClaimLine.sol:ClaimLine --verifier blockscout --verifier-url https://explorer.arc.io/api --constructor-args 0x0000000000000000000000003600000000000000000000000000000000000000 --compiler-version 0.8.28 --optimizer-runs 200 --chain 5042
 ```
 
 ---

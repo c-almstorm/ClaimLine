@@ -63,9 +63,9 @@ export const CHAINS_CONFIG: Record<number, ChainConfig> = {
     blockExplorers: {
       default: { name: 'Arc Explorer', url: 'https://explorer.arc.io' },
     },
-    claimLineAddress: '', // Not deployed yet
+    claimLineAddress: '0x6B7731c78B63C86468b0ddAE9C02432cb647d08e',
     usdcAddress: '0x3600000000000000000000000000000000000000',
-    deploymentBlock: 0n,
+    deploymentBlock: 24474184n,
   },
 };
 
