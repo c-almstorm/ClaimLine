@@ -44,20 +44,35 @@ export const AssetList: React.FC<AssetListProps> = ({
       const currentBlock = await publicClient.getBlockNumber();
       const fromBlock = activeConfig.deploymentBlock > 0n ? activeConfig.deploymentBlock : 0n;
       const CHUNK_SIZE = 10000n;
-      const allLogs: any[] = [];
       const eventAbi = parseAbiItem(
         'event AssetRegistered(bytes32 indexed assetId, address indexed borrower, string assetType, string docId, address custodian, address obligor, uint256 faceValue, uint256 seniorCapacity, uint256 juniorCapacity, uint256 seniorRepaymentOwed, uint256 juniorRepaymentOwed, uint256 minLock, uint256 deadline)'
       );
 
+      // Build chunk ranges
+      const chunks: { start: bigint; end: bigint }[] = [];
       for (let start = fromBlock; start <= currentBlock; start += CHUNK_SIZE) {
         const end = start + CHUNK_SIZE - 1n > currentBlock ? currentBlock : start + CHUNK_SIZE - 1n;
-        const chunkLogs = await publicClient.getLogs({
-          address: activeConfig.claimLineAddress,
-          event: eventAbi,
-          fromBlock: start,
-          toBlock: end,
-        });
-        allLogs.push(...chunkLogs);
+        chunks.push({ start, end });
+      }
+
+      // Process in parallel batches of 10
+      const BATCH_SIZE = 10;
+      const allLogs: any[] = [];
+      for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+        const batch = chunks.slice(i, i + BATCH_SIZE);
+        const batchResults = await Promise.all(
+          batch.map((chunk) =>
+            publicClient.getLogs({
+              address: activeConfig.claimLineAddress as `0x${string}`,
+              event: eventAbi,
+              fromBlock: chunk.start,
+              toBlock: chunk.end,
+            })
+          )
+        );
+        for (const logs of batchResults) {
+          allLogs.push(...logs);
+        }
       }
 
       const parsed: DiscoveredAsset[] = allLogs.map((log: any) => ({
@@ -102,7 +117,36 @@ export const AssetList: React.FC<AssetListProps> = ({
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4">
-      <div className="flex items-center justify-between">
+      {/* Fast Path: Open Asset by ID */}
+      <div className="p-3.5 bg-blue-50/70 border border-blue-200 rounded-xl space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5 text-xs font-bold text-blue-900">
+            <Search className="w-3.5 h-3.5 text-blue-600" />
+            <span>Open Asset by ID</span>
+          </div>
+          <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-blue-200/80 text-blue-800">
+            ⚡ Fast Path
+          </span>
+        </div>
+        <form onSubmit={handleManualSearch} className="flex gap-2">
+          <input
+            type="text"
+            value={searchId}
+            onChange={(e) => setSearchId(e.target.value)}
+            placeholder="Paste bytes32 Asset ID (0x...)"
+            className="w-full px-3 py-1.5 bg-white border border-blue-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none"
+          />
+          <button
+            type="submit"
+            disabled={!searchId.trim()}
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors whitespace-nowrap"
+          >
+            Open
+          </button>
+        </form>
+      </div>
+
+      <div className="flex items-center justify-between pt-1">
         <div className="flex items-center gap-2">
           <Layers className="w-5 h-5 text-blue-600" />
           <h2 className="text-sm font-bold text-slate-900">Registered Assets</h2>
@@ -120,26 +164,6 @@ export const AssetList: React.FC<AssetListProps> = ({
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-blue-600' : ''}`} />
         </button>
       </div>
-
-      {/* Manual Search */}
-      <form onSubmit={handleManualSearch} className="flex gap-2">
-        <div className="relative flex-1">
-          <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-          <input
-            type="text"
-            value={searchId}
-            onChange={(e) => setSearchId(e.target.value)}
-            placeholder="Search by Asset ID (0x...)"
-            className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none"
-          />
-        </div>
-        <button
-          type="submit"
-          className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-xl transition-colors"
-        >
-          Load
-        </button>
-      </form>
 
       {/* Asset Cards */}
       <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
