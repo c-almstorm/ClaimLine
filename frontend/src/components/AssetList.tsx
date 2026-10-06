@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { formatUnits, parseAbiItem, type PublicClient } from 'viem';
-import { Shield, Search, RefreshCw, Layers, ArrowRight, ExternalLink, Plus } from 'lucide-react';
+import { Shield, Search, RefreshCw, Layers, ArrowRight, ExternalLink, Plus, AlertCircle } from 'lucide-react';
 import { ChainConfig, CLAIMLINE_ABI } from '../config';
 
 export interface DiscoveredAsset {
@@ -31,11 +31,13 @@ export const AssetList: React.FC<AssetListProps> = ({
 }) => {
   const [assets, setAssets] = useState<DiscoveredAsset[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [scanError, setScanError] = useState<string | null>(null);
   const [searchId, setSearchId] = useState<string>('');
 
   const fetchAssets = useCallback(async () => {
     try {
       setLoading(true);
+      setScanError(null);
       if (!activeConfig.claimLineAddress) {
         setAssets([]);
         return;
@@ -43,7 +45,8 @@ export const AssetList: React.FC<AssetListProps> = ({
 
       const currentBlock = await publicClient.getBlockNumber();
       const fromBlock = activeConfig.deploymentBlock > 0n ? activeConfig.deploymentBlock : 0n;
-      const CHUNK_SIZE = 10000n;
+      // Arc RPC rejects ranges >= 10,000 blocks; 8,000 block chunks remain strictly within bounds
+      const CHUNK_SIZE = 8000n;
       const eventAbi = parseAbiItem(
         'event AssetRegistered(bytes32 indexed assetId, address indexed borrower, string assetType, string docId, address custodian, address obligor, uint256 faceValue, uint256 seniorCapacity, uint256 juniorCapacity, uint256 seniorRepaymentOwed, uint256 juniorRepaymentOwed, uint256 minLock, uint256 deadline)'
       );
@@ -97,8 +100,9 @@ export const AssetList: React.FC<AssetListProps> = ({
       if (!selectedAssetId && list.length > 0) {
         onSelectAsset(list[0].assetId);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error discovering assets from logs:', err);
+      setScanError(err?.shortMessage || err?.message || 'Failed to scan on-chain event logs');
     } finally {
       setLoading(false);
     }
@@ -165,9 +169,27 @@ export const AssetList: React.FC<AssetListProps> = ({
         </button>
       </div>
 
+      {/* Scan Error Banner with Retry */}
+      {scanError && (
+        <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 space-y-2">
+          <div className="flex items-center gap-1.5 font-semibold">
+            <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+            <span>Scan Error</span>
+          </div>
+          <p className="text-[11px] text-rose-700 font-mono break-all">{scanError}</p>
+          <button
+            onClick={fetchAssets}
+            className="inline-flex items-center gap-1 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-lg shadow-sm transition-colors"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Retry Scan</span>
+          </button>
+        </div>
+      )}
+
       {/* Asset Cards */}
       <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
-        {loading && assets.length === 0 ? (
+        {loading && assets.length === 0 && !scanError ? (
           <div className="py-8 text-center text-xs text-slate-400">Discovering on-chain assets...</div>
         ) : !activeConfig.claimLineAddress ? (
           <div className="py-8 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200 p-4">
@@ -176,7 +198,7 @@ export const AssetList: React.FC<AssetListProps> = ({
               Not deployed yet
             </span>
           </div>
-        ) : assets.length === 0 ? (
+        ) : assets.length === 0 && !scanError ? (
           <div className="py-8 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200 p-4">
             <p className="text-xs text-slate-500 mb-3">No assets discovered yet on this network.</p>
             <button

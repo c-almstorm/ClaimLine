@@ -21,10 +21,13 @@ export function useWallet() {
 
   const activeConfig = CHAINS_CONFIG[chainId] || CHAINS_CONFIG[DEFAULT_CHAIN_ID];
 
-  // Public Viem client for reading chain data
+  // Public Viem client for reading chain data with retry handling
   const publicClient: PublicClient = createPublicClient({
     chain: activeConfig,
-    transport: http(activeConfig.rpcUrls.default.http[0]),
+    transport: http(activeConfig.rpcUrls.default.http[0], {
+      retryCount: 5,
+      retryDelay: 500,
+    }),
   });
 
   // Wallet Viem client for user interactions
