@@ -6,15 +6,13 @@ $explorerUrl = "https://explorer.testnet.arc.io"
 $usdcAddress = "0x3600000000000000000000000000000000000000"
 $claimLineAddr = "0xeFCBD627341F70AED57d0099B030B06C40516279"
 $deployTxHash = "0xda5fda81e5bf51c52931e30062b4991bafadcbd451180fb78925aa734b265110"
-$pwFile = "$HOME\.foundry\password.txt"
-
 $deployerAccount = "claimline-deployer"
 $lender1Account  = "claimline-lender1"
 $lender2Account  = "claimline-lender2"
 
-$deployerAddr = (cast wallet address --account $deployerAccount --password-file $pwFile).Trim()
-$lender1Addr  = (cast wallet address --account $lender1Account --password-file $pwFile).Trim()
-$lender2Addr  = (cast wallet address --account $lender2Account --password-file $pwFile).Trim()
+$deployerAddr = (cast wallet address --account $deployerAccount).Trim()
+$lender1Addr  = (cast wallet address --account $lender1Account).Trim()
+$lender2Addr  = (cast wallet address --account $lender2Account).Trim()
 
 Write-Host "=========================================="
 Write-Host "CLAIMLINE TESTNET END-TO-END EXECUTION"
@@ -69,7 +67,7 @@ $seniorRepay = 6600000    # 6.6 USDC
 $juniorRepay = 3600000    # 3.6 USDC
 $deadline = [int64]((Get-Date).ToUniversalTime() - (Get-Date "1970-01-01")).TotalSeconds + 86400
 
-$regCmd = "cast send $claimLineAddr `"registerAsset(string,string,address,address,uint256,uint256,uint256,uint256,uint256,uint256)`" `"Invoice`" `"INV-ARC-TESTNET-001`" $deployerAddr $deployerAddr $faceValue $seniorCap $juniorCap $seniorRepay $juniorRepay $deadline --rpc-url $rpcUrl --account $deployerAccount --password-file $pwFile"
+$regCmd = "cast send $claimLineAddr `"registerAsset(string,string,address,address,uint256,uint256,uint256,uint256,uint256,uint256)`" `"Invoice`" `"INV-ARC-TESTNET-001`" $deployerAddr $deployerAddr $faceValue $seniorCap $juniorCap $seniorRepay $juniorRepay $deadline --rpc-url $rpcUrl --account $deployerAccount"
 $regTxHash = Send-Tx $regCmd
 
 $assetId = (cast keccak (cast abi-encode "f(string,string,address,address,uint256)" "Invoice" "INV-ARC-TESTNET-001" $deployerAddr $deployerAddr $faceValue)).Trim()
@@ -79,51 +77,51 @@ Write-Host "Asset ID: $assetId"
 Write-Host "`n[2/6] Setting token approvals..."
 $maxUint = "115792089237316195423570985008687907853269984665640564039457584007913129639935"
 
-$appL1Cmd = "cast send $usdcAddress `"approve(address,uint256)`" $claimLineAddr $maxUint --rpc-url $rpcUrl --account $lender1Account --password-file $pwFile"
+$appL1Cmd = "cast send $usdcAddress `"approve(address,uint256)`" $claimLineAddr $maxUint --rpc-url $rpcUrl --account $lender1Account"
 $appL1Tx = Send-Tx $appL1Cmd
 
-$appL2Cmd = "cast send $usdcAddress `"approve(address,uint256)`" $claimLineAddr $maxUint --rpc-url $rpcUrl --account $lender2Account --password-file $pwFile"
+$appL2Cmd = "cast send $usdcAddress `"approve(address,uint256)`" $claimLineAddr $maxUint --rpc-url $rpcUrl --account $lender2Account"
 $appL2Tx = Send-Tx $appL2Cmd
 
-$appBorrowerCmd = "cast send $usdcAddress `"approve(address,uint256)`" $claimLineAddr $maxUint --rpc-url $rpcUrl --account $deployerAccount --password-file $pwFile"
+$appBorrowerCmd = "cast send $usdcAddress `"approve(address,uint256)`" $claimLineAddr $maxUint --rpc-url $rpcUrl --account $deployerAccount"
 $appBorrowerTx = Send-Tx $appBorrowerCmd
 
 # 3. Placing Locks (Two Senior, One Junior)
 Write-Host "`n[3/6] Placing 3 locks..."
 # Lock 1: Lender 1 locks 4 USDC Senior
-$lock1Cmd = "cast send $claimLineAddr `"lock(bytes32,uint256,uint8)`" $assetId 4000000 0 --rpc-url $rpcUrl --account $lender1Account --password-file $pwFile"
+$lock1Cmd = "cast send $claimLineAddr `"lock(bytes32,uint256,uint8)`" $assetId 4000000 0 --rpc-url $rpcUrl --account $lender1Account"
 $lock1Tx = Send-Tx $lock1Cmd
 
 # Lock 2: Lender 2 locks 4 USDC Senior (Senior cap is 6 USDC -> 2 accepted, 2 refunded)
-$lock2Cmd = "cast send $claimLineAddr `"lock(bytes32,uint256,uint8)`" $assetId 4000000 0 --rpc-url $rpcUrl --account $lender2Account --password-file $pwFile"
+$lock2Cmd = "cast send $claimLineAddr `"lock(bytes32,uint256,uint8)`" $assetId 4000000 0 --rpc-url $rpcUrl --account $lender2Account"
 $lock2Tx = Send-Tx $lock2Cmd
 
 # Lock 3: Lender 1 locks 3 USDC Junior (Junior cap is 3 USDC -> 3 accepted)
-$lock3Cmd = "cast send $claimLineAddr `"lock(bytes32,uint256,uint8)`" $assetId 3000000 1 --rpc-url $rpcUrl --account $lender1Account --password-file $pwFile"
+$lock3Cmd = "cast send $claimLineAddr `"lock(bytes32,uint256,uint8)`" $assetId 3000000 1 --rpc-url $rpcUrl --account $lender1Account"
 $lock3Tx = Send-Tx $lock3Cmd
 
 # 4. Close Race
 Write-Host "`n[4/6] Closing race (allocating positions and pull-based proceeds)..."
-$closeCmd = "cast send $claimLineAddr `"close(bytes32)`" $assetId --rpc-url $rpcUrl --account $deployerAccount --password-file $pwFile"
+$closeCmd = "cast send $claimLineAddr `"close(bytes32)`" $assetId --rpc-url $rpcUrl --account $deployerAccount"
 $closeTx = Send-Tx $closeCmd
 
 # 5. Repay Partially
 Write-Host "`n[5/6] Repaying 7.0 USDC (6.6 Senior + 0.4 Junior)..."
-$repayCmd = "cast send $claimLineAddr `"repay(bytes32,uint256)`" $assetId 7000000 --rpc-url $rpcUrl --account $deployerAccount --password-file $pwFile"
+$repayCmd = "cast send $claimLineAddr `"repay(bytes32,uint256)`" $assetId 7000000 --rpc-url $rpcUrl --account $deployerAccount"
 $repayTx = Send-Tx $repayCmd
 
 # 6. Everyone Claims
 Write-Host "`n[6/6] Claiming proceeds, refunds, and repayments..."
 # Borrower claims proceeds (9.0 USDC)
-$claimBorrowerCmd = "cast send $claimLineAddr `"claim(bytes32)`" $assetId --rpc-url $rpcUrl --account $deployerAccount --password-file $pwFile"
+$claimBorrowerCmd = "cast send $claimLineAddr `"claim(bytes32)`" $assetId --rpc-url $rpcUrl --account $deployerAccount"
 $claimBorrowerTx = Send-Tx $claimBorrowerCmd
 
 # Lender 1 claims repayment (4.4 Senior + 0.4 Junior = 4.8 USDC)
-$claimL1Cmd = "cast send $claimLineAddr `"claim(bytes32)`" $assetId --rpc-url $rpcUrl --account $lender1Account --password-file $pwFile"
+$claimL1Cmd = "cast send $claimLineAddr `"claim(bytes32)`" $assetId --rpc-url $rpcUrl --account $lender1Account"
 $claimL1Tx = Send-Tx $claimL1Cmd
 
 # Lender 2 claims refund + repayment (2.0 refund + 2.2 Senior = 4.2 USDC)
-$claimL2Cmd = "cast send $claimLineAddr `"claim(bytes32)`" $assetId --rpc-url $rpcUrl --account $lender2Account --password-file $pwFile"
+$claimL2Cmd = "cast send $claimLineAddr `"claim(bytes32)`" $assetId --rpc-url $rpcUrl --account $lender2Account"
 $claimL2Tx = Send-Tx $claimL2Cmd
 
 # Final Balances
