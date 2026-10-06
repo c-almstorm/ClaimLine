@@ -58,20 +58,36 @@ export const AssetList: React.FC<AssetListProps> = ({
         chunks.push({ start, end });
       }
 
+      // Recursive log query with automatic halving retry on range or node errors
+      const fetchLogsWithHalving = async (start: bigint, end: bigint): Promise<any[]> => {
+        try {
+          return await publicClient.getLogs({
+            address: activeConfig.claimLineAddress as `0x${string}`,
+            event: eventAbi,
+            fromBlock: start,
+            toBlock: end,
+          });
+        } catch (err: any) {
+          // If the range spans more than 1 block, split in half and retry both sub-chunks
+          if (end > start) {
+            const mid = start + (end - start) / 2n;
+            const [firstHalf, secondHalf] = await Promise.all([
+              fetchLogsWithHalving(start, mid),
+              fetchLogsWithHalving(mid + 1n, end),
+            ]);
+            return [...firstHalf, ...secondHalf];
+          }
+          throw err;
+        }
+      };
+
       // Process in parallel batches of 10
       const BATCH_SIZE = 10;
       const allLogs: any[] = [];
       for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
         const batch = chunks.slice(i, i + BATCH_SIZE);
         const batchResults = await Promise.all(
-          batch.map((chunk) =>
-            publicClient.getLogs({
-              address: activeConfig.claimLineAddress as `0x${string}`,
-              event: eventAbi,
-              fromBlock: chunk.start,
-              toBlock: chunk.end,
-            })
-          )
+          batch.map((chunk) => fetchLogsWithHalving(chunk.start, chunk.end))
         );
         for (const logs of batchResults) {
           allLogs.push(...logs);
