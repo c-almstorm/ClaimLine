@@ -3,6 +3,7 @@ import {
   createPublicClient,
   createWalletClient,
   custom,
+  fallback,
   http,
   formatUnits,
   parseUnits,
@@ -21,12 +22,18 @@ export function useWallet() {
 
   const activeConfig = CHAINS_CONFIG[chainId] || CHAINS_CONFIG[DEFAULT_CHAIN_ID];
 
-  // Public Viem client for reading chain data with retry handling
+  // Public Viem client using fallback transport over official public endpoints tried in order
+  // (endpoints cited from official Arc documentation: https://docs.arc.network/)
+  const rpcTransports = activeConfig.rpcUrls.default.http.map((url) =>
+    http(url, { retryCount: 3, retryDelay: 1000 })
+  );
+
   const publicClient: PublicClient = createPublicClient({
     chain: activeConfig,
-    transport: http(activeConfig.rpcUrls.default.http[0], {
-      retryCount: 5,
-      retryDelay: 500,
+    transport: fallback(rpcTransports, {
+      rank: false, // Strict in-order sequential fallback
+      retryCount: 3,
+      retryDelay: 1000,
     }),
   });
 
@@ -198,13 +205,50 @@ export function useWallet() {
     };
   }, [disconnect]);
 
-  // Initial and periodic balance updates
+  // Initial and periodic balance updates (15s interval, paused when tab is hidden)
   useEffect(() => {
-    if (address) {
-      refreshBalances();
-      const interval = setInterval(refreshBalances, 10000);
-      return () => clearInterval(interval);
+    if (!address) return;
+    refreshBalances();
+
+    let intervalId: any = null;
+
+    const startPolling = () => {
+      if (!intervalId && typeof document !== 'undefined' && !document.hidden) {
+        intervalId = setInterval(() => {
+          if (typeof document !== 'undefined' && !document.hidden) {
+            refreshBalances();
+          }
+        }, 15000);
+      }
+    };
+
+    const stopPolling = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        stopPolling();
+      } else {
+        refreshBalances();
+        startPolling();
+      }
+    };
+
+    startPolling();
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
     }
+
+    return () => {
+      stopPolling();
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+    };
   }, [address, chainId, refreshBalances]);
 
   return {

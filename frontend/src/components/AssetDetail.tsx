@@ -162,10 +162,49 @@ export const AssetDetail: React.FC<AssetDetailProps> = ({
     }
   }, [assetId, activeConfig, userAddress, publicClient]);
 
+  // Periodic asset detail updates (15s interval, paused when tab is hidden)
   useEffect(() => {
     fetchAssetDetails();
-    const interval = setInterval(fetchAssetDetails, 8000);
-    return () => clearInterval(interval);
+
+    let intervalId: any = null;
+
+    const startPolling = () => {
+      if (!intervalId && typeof document !== 'undefined' && !document.hidden) {
+        intervalId = setInterval(() => {
+          if (typeof document !== 'undefined' && !document.hidden) {
+            fetchAssetDetails();
+          }
+        }, 15000);
+      }
+    };
+
+    const stopPolling = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        stopPolling();
+      } else {
+        fetchAssetDetails();
+        startPolling();
+      }
+    };
+
+    startPolling();
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
+    return () => {
+      stopPolling();
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+    };
   }, [fetchAssetDetails]);
 
   // Helper for USDC Allowance & Approval

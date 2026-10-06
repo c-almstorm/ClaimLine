@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { formatUnits, parseAbiItem, type PublicClient } from 'viem';
-import { Shield, Search, RefreshCw, Layers, ArrowRight, ExternalLink, Plus, AlertCircle } from 'lucide-react';
+import { Shield, Search, RefreshCw, Layers, ArrowRight, ExternalLink, Plus, AlertCircle, Loader2 } from 'lucide-react';
 import { ChainConfig, CLAIMLINE_ABI } from '../config';
 
 export interface DiscoveredAsset {
@@ -22,6 +22,90 @@ interface AssetListProps {
   onOpenRegisterModal: () => void;
 }
 
+// Storage helpers with try/catch wrapping around every access
+function getStoredScan(
+  chainId: number,
+  contractAddress: string
+): { lastScannedBlock: bigint; assets: DiscoveredAsset[] } | null {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return null;
+    const key = `claimline_scan_${chainId}_${contractAddress.toLowerCase()}`;
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.lastScannedBlock) return null;
+
+    const assets: DiscoveredAsset[] = (parsed.assets || []).map((a: any) => ({
+      assetId: a.assetId,
+      borrower: a.borrower,
+      assetType: a.assetType || 'Invoice',
+      docId: a.docId || 'DOC-001',
+      faceValue: BigInt(a.faceValue || '0'),
+      seniorCapacity: BigInt(a.seniorCapacity || '0'),
+      juniorCapacity: BigInt(a.juniorCapacity || '0'),
+      deadline: BigInt(a.deadline || '0'),
+    }));
+
+    return {
+      lastScannedBlock: BigInt(parsed.lastScannedBlock),
+      assets,
+    };
+  } catch (err) {
+    console.warn('Failed to read scan cache from localStorage:', err);
+    return null;
+  }
+}
+
+function setStoredScan(
+  chainId: number,
+  contractAddress: string,
+  lastScannedBlock: bigint,
+  assets: DiscoveredAsset[]
+): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    const key = `claimline_scan_${chainId}_${contractAddress.toLowerCase()}`;
+    const serialized = {
+      lastScannedBlock: lastScannedBlock.toString(),
+      assets: assets.map((a) => ({
+        assetId: a.assetId,
+        borrower: a.borrower,
+        assetType: a.assetType,
+        docId: a.docId,
+        faceValue: a.faceValue.toString(),
+        seniorCapacity: a.seniorCapacity.toString(),
+        juniorCapacity: a.juniorCapacity.toString(),
+        deadline: a.deadline.toString(),
+      })),
+    };
+    window.localStorage.setItem(key, JSON.stringify(serialized));
+  } catch (err) {
+    console.warn('Failed to write scan cache to localStorage:', err);
+  }
+}
+
+function isRateLimitError(err: any): boolean {
+  if (!err) return false;
+  const str =
+    (err.message || '') +
+    ' ' +
+    (err.shortMessage || '') +
+    ' ' +
+    (err.details || '') +
+    ' ' +
+    JSON.stringify(err);
+  return (
+    err.code === -32005 ||
+    err?.cause?.code === -32005 ||
+    err?.status === 429 ||
+    str.includes('-32005') ||
+    str.toLowerCase().includes('rate limit') ||
+    str.toLowerCase().includes('too many requests')
+  );
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export const AssetList: React.FC<AssetListProps> = ({
   activeConfig,
   publicClient,
@@ -31,20 +115,55 @@ export const AssetList: React.FC<AssetListProps> = ({
 }) => {
   const [assets, setAssets] = useState<DiscoveredAsset[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [isRpcBusy, setIsRpcBusy] = useState<boolean>(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [searchId, setSearchId] = useState<string>('');
 
+  const isScanningRef = useRef<boolean>(false);
+
   const fetchAssets = useCallback(async () => {
+    if (isScanningRef.current) return;
+    isScanningRef.current = true;
+
     try {
       setLoading(true);
       setScanError(null);
+      setIsRpcBusy(false);
+
       if (!activeConfig.claimLineAddress) {
         setAssets([]);
+        setLoading(false);
+        isScanningRef.current = false;
         return;
       }
 
+      const contractAddr = activeConfig.claimLineAddress;
+      const cached = getStoredScan(activeConfig.id, contractAddr);
+
+      let existingAssets: DiscoveredAsset[] = [];
+      let fromBlock = activeConfig.deploymentBlock > 0n ? activeConfig.deploymentBlock : 0n;
+
+      if (cached) {
+        existingAssets = cached.assets;
+        setAssets(cached.assets);
+        if (cached.lastScannedBlock >= fromBlock) {
+          fromBlock = cached.lastScannedBlock + 1n;
+        }
+      }
+
       const currentBlock = await publicClient.getBlockNumber();
-      const fromBlock = activeConfig.deploymentBlock > 0n ? activeConfig.deploymentBlock : 0n;
+
+      // If already scanned up to current block, nothing new to scan
+      if (fromBlock > currentBlock) {
+        setAssets(existingAssets);
+        if (!selectedAssetId && existingAssets.length > 0) {
+          onSelectAsset(existingAssets[0].assetId);
+        }
+        setLoading(false);
+        isScanningRef.current = false;
+        return;
+      }
+
       // Arc RPC rejects ranges >= 10,000 blocks; 8,000 block chunks remain strictly within bounds
       const CHUNK_SIZE = 8000n;
       const eventAbi = parseAbiItem(
@@ -58,22 +177,36 @@ export const AssetList: React.FC<AssetListProps> = ({
         chunks.push({ start, end });
       }
 
-      // Recursive log query with automatic halving retry on range or node errors
-      const fetchLogsWithHalving = async (start: bigint, end: bigint): Promise<any[]> => {
+      // Recursive log query with exponential backoff on -32005 rate limit & halving on range errors
+      const fetchLogsWithRetry = async (
+        start: bigint,
+        end: bigint,
+        attempt = 0
+      ): Promise<any[]> => {
         try {
           return await publicClient.getLogs({
-            address: activeConfig.claimLineAddress as `0x${string}`,
+            address: contractAddr as `0x${string}`,
             event: eventAbi,
             fromBlock: start,
             toBlock: end,
           });
         } catch (err: any) {
-          // If the range spans more than 1 block, split in half and retry both sub-chunks
+          if (isRateLimitError(err)) {
+            setIsRpcBusy(true);
+            if (attempt < 5) {
+              // Exponential backoff: 1s, 2s, 4s, 8s + jitter
+              const backoffMs = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 10000);
+              await sleep(backoffMs);
+              return fetchLogsWithRetry(start, end, attempt + 1);
+            }
+          }
+
+          // If range spans more than 1 block, split in half and retry both sub-chunks
           if (end > start) {
             const mid = start + (end - start) / 2n;
             const [firstHalf, secondHalf] = await Promise.all([
-              fetchLogsWithHalving(start, mid),
-              fetchLogsWithHalving(mid + 1n, end),
+              fetchLogsWithRetry(start, mid, 0),
+              fetchLogsWithRetry(mid + 1n, end, 0),
             ]);
             return [...firstHalf, ...secondHalf];
           }
@@ -81,20 +214,24 @@ export const AssetList: React.FC<AssetListProps> = ({
         }
       };
 
-      // Process in parallel batches of 10
-      const BATCH_SIZE = 10;
-      const allLogs: any[] = [];
+      // Process in parallel batches of 3 (cut from 10 to 3)
+      const BATCH_SIZE = 3;
+      const allNewLogs: any[] = [];
       for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
         const batch = chunks.slice(i, i + BATCH_SIZE);
         const batchResults = await Promise.all(
-          batch.map((chunk) => fetchLogsWithHalving(chunk.start, chunk.end))
+          batch.map((chunk) => fetchLogsWithRetry(chunk.start, chunk.end, 0))
         );
         for (const logs of batchResults) {
-          allLogs.push(...logs);
+          allNewLogs.push(...logs);
+        }
+        // Brief cooperative pause between batches to protect RPC rate limit capacity
+        if (i + BATCH_SIZE < chunks.length) {
+          await sleep(100);
         }
       }
 
-      const parsed: DiscoveredAsset[] = allLogs.map((log: any) => ({
+      const newParsed: DiscoveredAsset[] = allNewLogs.map((log: any) => ({
         assetId: log.args.assetId,
         borrower: log.args.borrower,
         assetType: log.args.assetType || 'Invoice',
@@ -105,22 +242,31 @@ export const AssetList: React.FC<AssetListProps> = ({
         deadline: log.args.deadline,
       }));
 
-      // Deduplicate by assetId
+      // Merge existing cached assets with newly found assets, deduplicated by assetId
       const uniqueMap = new Map<string, DiscoveredAsset>();
-      parsed.forEach((a) => uniqueMap.set(a.assetId.toLowerCase(), a));
+      existingAssets.forEach((a) => uniqueMap.set(a.assetId.toLowerCase(), a));
+      newParsed.forEach((a) => uniqueMap.set(a.assetId.toLowerCase(), a));
 
-      const list = Array.from(uniqueMap.values()).reverse();
-      setAssets(list);
+      const mergedList = Array.from(uniqueMap.values()).reverse();
+      setAssets(mergedList);
+      setIsRpcBusy(false);
+
+      // Cache scan progress in localStorage
+      setStoredScan(activeConfig.id, contractAddr, currentBlock, Array.from(uniqueMap.values()));
 
       // Auto-select first asset if none selected
-      if (!selectedAssetId && list.length > 0) {
-        onSelectAsset(list[0].assetId);
+      if (!selectedAssetId && mergedList.length > 0) {
+        onSelectAsset(mergedList[0].assetId);
       }
     } catch (err: any) {
       console.error('Error discovering assets from logs:', err);
+      if (isRateLimitError(err)) {
+        setIsRpcBusy(true);
+      }
       setScanError(err?.shortMessage || err?.message || 'Failed to scan on-chain event logs');
     } finally {
       setLoading(false);
+      isScanningRef.current = false;
     }
   }, [activeConfig, publicClient, selectedAssetId, onSelectAsset]);
 
@@ -185,8 +331,16 @@ export const AssetList: React.FC<AssetListProps> = ({
         </button>
       </div>
 
+      {/* RPC Busy / Retrying Notification */}
+      {isRpcBusy && (
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 flex items-center gap-2">
+          <Loader2 className="w-4 h-4 animate-spin text-amber-600 flex-shrink-0" />
+          <span className="font-medium">RPC busy, retrying...</span>
+        </div>
+      )}
+
       {/* Scan Error Banner with Retry */}
-      {scanError && (
+      {scanError && !isRpcBusy && (
         <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 space-y-2">
           <div className="flex items-center gap-1.5 font-semibold">
             <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
@@ -206,7 +360,12 @@ export const AssetList: React.FC<AssetListProps> = ({
       {/* Asset Cards */}
       <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
         {loading && assets.length === 0 && !scanError ? (
-          <div className="py-8 text-center text-xs text-slate-400">Discovering on-chain assets...</div>
+          <div className="py-8 text-center text-xs text-slate-400 flex flex-col items-center gap-2">
+            <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+            <span>
+              {isRpcBusy ? 'RPC busy, retrying...' : 'Discovering on-chain assets...'}
+            </span>
+          </div>
         ) : !activeConfig.claimLineAddress ? (
           <div className="py-8 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200 p-4">
             <p className="text-xs text-slate-500 mb-2 font-medium">Contract is not deployed yet on {activeConfig.name}.</p>
@@ -216,14 +375,18 @@ export const AssetList: React.FC<AssetListProps> = ({
           </div>
         ) : assets.length === 0 && !scanError ? (
           <div className="py-8 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200 p-4">
-            <p className="text-xs text-slate-500 mb-3">No assets discovered yet on this network.</p>
-            <button
-              onClick={onOpenRegisterModal}
-              className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-sm"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Register First Asset</span>
-            </button>
+            <p className="text-xs text-slate-500 mb-3">
+              {isRpcBusy ? 'RPC busy, retrying...' : 'No assets discovered yet on this network.'}
+            </p>
+            {!isRpcBusy && (
+              <button
+                onClick={onOpenRegisterModal}
+                className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-sm"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Register First Asset</span>
+              </button>
+            )}
           </div>
         ) : (
           assets.map((asset) => {
