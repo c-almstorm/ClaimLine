@@ -7,7 +7,7 @@ import { AssetDetail } from './components/AssetDetail';
 import { RegisterAssetModal } from './components/RegisterAssetModal';
 import { TxModal, TxState } from './components/TxModal';
 import { CLAIMLINE_ABI } from './config';
-import { Shield, Sparkles, PlusCircle } from 'lucide-react';
+import { Shield, PlusCircle } from 'lucide-react';
 
 export function App() {
   const {
@@ -18,6 +18,8 @@ export function App() {
     nativeBalance,
     isConnecting,
     error: walletError,
+    currentBlock,
+    blockTrigger,
     publicClient,
     getWalletClient,
     connect,
@@ -27,10 +29,8 @@ export function App() {
     refreshBalances,
   } = useWallet();
 
-  const [selectedAssetId, setSelectedAssetId] = useState<`0x${string}` | null>(
-    // Default to the known testnet asset if on testnet
-    chainId === 5042002 ? '0x5332f8c73598b74c29884a65205f0b258bd3fd337692ed52ccee1d68a9c77691' : null
-  );
+  // No hardcoded default preselected asset; default is null (shows placeholder)
+  const [selectedAssetId, setSelectedAssetId] = useState<`0x${string}` | null>(null);
 
   const [isRegisterOpen, setIsRegisterOpen] = useState<boolean>(false);
   const [txState, setTxState] = useState<TxState>({
@@ -92,15 +92,15 @@ export function App() {
         description: 'Waiting for registration confirmation on Arc...',
       }));
 
-      const receipt = await publicClient.waitForTransactionReceipt({ hash: tx });
+      await publicClient.waitForTransactionReceipt({ hash: tx });
 
-      // Extract assetId from event log if possible
-      setTxState((prev) => ({
-        ...prev,
+      setTxState({
+        isOpen: true,
         status: 'success',
         title: 'Asset Registered Successfully',
         description: 'Collateral asset registered on Arc! Open for escrow locks.',
-      }));
+        txHash: tx,
+      });
 
       refreshBalances();
     } catch (err: any) {
@@ -110,7 +110,7 @@ export function App() {
         status: 'error',
         title: 'Registration Failed',
         description: 'Asset registration transaction failed or was rejected.',
-        errorMessage: err?.message || 'Transaction failed',
+        errorMessage: err?.shortMessage || err?.message || 'Transaction failed',
       });
       throw err;
     }
@@ -154,6 +154,9 @@ export function App() {
             <AssetList
               activeConfig={activeConfig}
               publicClient={publicClient}
+              currentBlock={currentBlock}
+              blockTrigger={blockTrigger}
+              userAddress={address}
               selectedAssetId={selectedAssetId}
               onSelectAsset={(id) => setSelectedAssetId(id)}
               onOpenRegisterModal={() => setIsRegisterOpen(true)}
@@ -190,6 +193,7 @@ export function App() {
                 activeConfig={activeConfig}
                 userAddress={address}
                 publicClient={publicClient}
+                blockTrigger={blockTrigger}
                 getWalletClient={getWalletClient}
                 onRefreshBalances={refreshBalances}
                 setTxState={setTxState}
@@ -201,7 +205,7 @@ export function App() {
                 </div>
                 <h2 className="text-lg font-bold text-slate-900 mb-2">No Asset Selected</h2>
                 <p className="text-sm text-slate-500 max-w-md mx-auto mb-6">
-                  Select a registered asset from the list on the left or register a new collateral asset to inspect lien priority, lock history, and waterfall settlement.
+                  Select a registered asset from the list on the left, use the Fast Path search with an Asset ID, or register a new collateral asset.
                 </p>
                 {address && (
                   <button
@@ -261,4 +265,5 @@ export function App() {
     </div>
   );
 }
+
 export default App;

@@ -71,15 +71,6 @@ export type ChainConfig = Chain & {
 };
 
 export const CHAINS_CONFIG: Record<number, ChainConfig> = {
-  5042002: {
-    ...arcTestnet,
-    blockExplorers: {
-      default: { name: 'Arc Testnet Explorer', url: 'https://explorer.testnet.arc.io' },
-    },
-    claimLineAddress: '0xeFCBD627341F70AED57d0099B030B06C40516279',
-    usdcAddress: '0x3600000000000000000000000000000000000000',
-    deploymentBlock: 65571537n,
-  },
   5042: {
     ...arcMainnet,
     blockExplorers: {
@@ -89,9 +80,19 @@ export const CHAINS_CONFIG: Record<number, ChainConfig> = {
     usdcAddress: '0x3600000000000000000000000000000000000000',
     deploymentBlock: 24474184n,
   },
+  5042002: {
+    ...arcTestnet,
+    blockExplorers: {
+      default: { name: 'Arc Testnet Explorer', url: 'https://explorer.testnet.arc.io' },
+    },
+    claimLineAddress: '0xeFCBD627341F70AED57d0099B030B06C40516279',
+    usdcAddress: '0x3600000000000000000000000000000000000000',
+    deploymentBlock: 65571537n,
+  },
 };
 
-export const DEFAULT_CHAIN_ID = 5042002;
+// Default fallback chain is Arc Mainnet (5042)
+export const DEFAULT_CHAIN_ID = 5042;
 
 export const ERC20_ABI = parseAbi([
   'function balanceOf(address account) external view returns (uint256)',
@@ -102,4 +103,3 @@ export const ERC20_ABI = parseAbi([
   'event Approval(address indexed owner, address indexed spender, uint256 value)',
   'event Transfer(address indexed from, address indexed to, uint256 value)',
 ]);
-

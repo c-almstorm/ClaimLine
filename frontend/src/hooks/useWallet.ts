@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   createPublicClient,
   createWalletClient,
@@ -11,11 +11,49 @@ import {
   type WalletClient,
   type Transport,
 } from 'viem';
-import { CHAINS_CONFIG, DEFAULT_CHAIN_ID, ERC20_ABI, CLAIMLINE_ABI } from '../config';
+import { CHAINS_CONFIG, DEFAULT_CHAIN_ID, ERC20_ABI, CLAIMLINE_ABI, ChainConfig } from '../config';
+
+// Resolve starting chain ID in order: ?chain= URL param -> localStorage -> Default Mainnet (5042)
+function resolveInitialChainId(): number {
+  if (typeof window !== 'undefined') {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const chainParam = urlParams.get('chain');
+      if (chainParam) {
+        const lower = chainParam.toLowerCase();
+        if (lower === '5042' || lower === 'mainnet' || lower === 'arc-mainnet') return 5042;
+        if (lower === '5042002' || lower === 'testnet' || lower === 'arc-testnet') return 5042002;
+        const num = parseInt(chainParam, 10);
+        if (CHAINS_CONFIG[num]) return num;
+      }
+    } catch (e) {
+      console.warn('Failed to parse URL chain param:', e);
+    }
+
+    try {
+      const stored = window.localStorage.getItem('claimline_selected_chain');
+      if (stored) {
+        const num = parseInt(stored, 10);
+        if (CHAINS_CONFIG[num]) return num;
+      }
+    } catch (e) {
+      console.warn('Failed to read chain from localStorage:', e);
+    }
+  }
+  return DEFAULT_CHAIN_ID;
+}
 
 // Custom transport wrapper that rejects any RPC endpoint whose chain ID does not match expectedChainId
-function createValidatedHttpTransport(url: string, expectedChainId: number) {
-  const baseHttp = http(url, { retryCount: 3, retryDelay: 1000 });
+// and enables HTTP request batching for combining concurrent calls
+function createValidatedHttpTransport(url: string, expectedChainId: number): Transport {
+  const baseHttp = http(url, {
+    batch: {
+      batchSize: 50,
+      wait: 10,
+    },
+    retryCount: 3,
+    retryDelay: 1000,
+  });
   let verified = false;
 
   return custom(
@@ -23,7 +61,6 @@ function createValidatedHttpTransport(url: string, expectedChainId: number) {
       async request({ method, params }: { method: string; params?: any }) {
         const httpInstance = baseHttp({ chain: undefined });
 
-        // Automatically validate chainId on first request if not already verified
         if (!verified && method !== 'eth_chainId') {
           const chainIdHex = (await httpInstance.request({ method: 'eth_chainId' })) as string;
           const actualChainId =
@@ -59,29 +96,33 @@ function createValidatedHttpTransport(url: string, expectedChainId: number) {
 }
 
 export function useWallet() {
-  const [chainId, setChainId] = useState<number>(DEFAULT_CHAIN_ID);
+  const [chainId, setChainId] = useState<number>(resolveInitialChainId);
   const [address, setAddress] = useState<`0x${string}` | null>(null);
   const [usdcBalance, setUsdcBalance] = useState<string>('0');
   const [nativeBalance, setNativeBalance] = useState<string>('0');
   const [isConnecting, setIsConnecting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Single shared block number and trigger across components
+  const [currentBlock, setCurrentBlock] = useState<bigint | null>(null);
+  const [blockTrigger, setBlockTrigger] = useState<number>(0);
+
   const activeConfig = CHAINS_CONFIG[chainId] || CHAINS_CONFIG[DEFAULT_CHAIN_ID];
 
-  // Public Viem client using validated fallback transport over official public endpoints tried in order
-  // (endpoints cited from official Arc documentation: https://docs.arc.network/developers/networks)
-  const rpcTransports = activeConfig.rpcUrls.default.http.map((url) =>
-    createValidatedHttpTransport(url, activeConfig.id)
-  );
-
-  const publicClient: PublicClient = createPublicClient({
-    chain: activeConfig,
-    transport: fallback(rpcTransports, {
-      rank: false, // Strict in-order sequential fallback
-      retryCount: 3,
-      retryDelay: 1000,
-    }),
-  });
+  // Public Viem client using validated fallback transport with HTTP batching
+  const publicClient: PublicClient = useMemo(() => {
+    const rpcTransports = activeConfig.rpcUrls.default.http.map((url) =>
+      createValidatedHttpTransport(url, activeConfig.id)
+    );
+    return createPublicClient({
+      chain: activeConfig,
+      transport: fallback(rpcTransports, {
+        rank: false,
+        retryCount: 3,
+        retryDelay: 1000,
+      }),
+    });
+  }, [activeConfig]);
 
   // Wallet Viem client for user interactions
   const getWalletClient = useCallback((): WalletClient | null => {
@@ -111,7 +152,7 @@ export function useWallet() {
       setNativeBalance(formatUnits(rawNative, 18));
       setUsdcBalance(formatUnits(rawUsdc, 6));
     } catch (err: any) {
-      console.error('Error fetching balances:', err);
+      console.warn('Error fetching balances:', err);
     }
   }, [address, activeConfig, publicClient]);
 
@@ -132,7 +173,6 @@ export function useWallet() {
       const [acc] = await walletClient.requestAddresses();
       setAddress(acc);
 
-      // Check current chain
       const hexChain = await (window as any).ethereum.request({ method: 'eth_chainId' });
       const currentChainId = parseInt(hexChain, 16);
       if (CHAINS_CONFIG[currentChainId]) {
@@ -153,45 +193,56 @@ export function useWallet() {
     setNativeBalance('0');
   }, []);
 
-  // Switch network
+  // Switch network with URL & localStorage sync
   const switchChain = useCallback(async (targetChainId: number) => {
     const target = CHAINS_CONFIG[targetChainId];
     if (!target) return;
 
     setError(null);
-    if (typeof window === 'undefined' || !(window as any).ethereum) {
-      setChainId(targetChainId);
-      return;
+    setChainId(targetChainId);
+    setCurrentBlock(null);
+
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.setItem('claimline_selected_chain', String(targetChainId));
+      } catch (e) {
+        console.warn('localStorage write error:', e);
+      }
+
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set('chain', String(targetChainId));
+        window.history.replaceState({}, '', url.toString());
+      } catch (e) {
+        console.warn('URL update error:', e);
+      }
     }
 
-    try {
-      await (window as any).ethereum.request({
-        method: 'wallet_switchEthereumChain',
-        params: [{ chainId: `0x${targetChainId.toString(16)}` }],
-      });
-      setChainId(targetChainId);
-    } catch (switchError: any) {
-      // If chain not added to wallet (error 4902), add it
-      if (switchError.code === 4902 || switchError?.data?.originalError?.code === 4902) {
-        try {
-          await (window as any).ethereum.request({
-            method: 'wallet_addEthereumChain',
-            params: [
-              {
-                chainId: `0x${targetChainId.toString(16)}`,
-                chainName: target.name,
-                nativeCurrency: target.nativeCurrency,
-                rpcUrls: target.rpcUrls.default.http,
-                blockExplorerUrls: [target.blockExplorers.default.url],
-              },
-            ],
-          });
-          setChainId(targetChainId);
-        } catch (addError: any) {
-          setError(addError?.message || 'Failed to add Arc network to wallet');
+    if (typeof window !== 'undefined' && (window as any).ethereum) {
+      try {
+        await (window as any).ethereum.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: `0x${targetChainId.toString(16)}` }],
+        });
+      } catch (switchError: any) {
+        if (switchError.code === 4902 || switchError?.data?.originalError?.code === 4902) {
+          try {
+            await (window as any).ethereum.request({
+              method: 'wallet_addEthereumChain',
+              params: [
+                {
+                  chainId: `0x${target.id.toString(16)}`,
+                  chainName: target.name,
+                  nativeCurrency: target.nativeCurrency,
+                  rpcUrls: target.rpcUrls.default.http,
+                  blockExplorerUrls: [target.blockExplorers.default.url],
+                },
+              ],
+            });
+          } catch (addError: any) {
+            setError(addError?.message || 'Failed to add Arc network to wallet');
+          }
         }
-      } else {
-        setError(switchError?.message || 'Failed to switch network');
       }
     }
   }, []);
@@ -238,7 +289,7 @@ export function useWallet() {
     const handleChainChanged = (hexChain: string) => {
       const newChainId = parseInt(hexChain, 16);
       if (CHAINS_CONFIG[newChainId]) {
-        setChainId(newChainId);
+        switchChain(newChainId);
       }
     };
 
@@ -249,53 +300,75 @@ export function useWallet() {
       eth.removeListener('accountsChanged', handleAccountsChanged);
       eth.removeListener('chainChanged', handleChainChanged);
     };
-  }, [disconnect]);
+  }, [disconnect, switchChain]);
 
-  // Initial and periodic balance updates (15s interval, paused when tab is hidden)
+  // SINGLE SHARED BLOCK POLLER (15s interval, paused when tab is hidden)
   useEffect(() => {
-    if (!address) return;
-    refreshBalances();
-
+    let cancelled = false;
     let intervalId: any = null;
 
-    const startPolling = () => {
-      if (!intervalId && typeof document !== 'undefined' && !document.hidden) {
-        intervalId = setInterval(() => {
-          if (typeof document !== 'undefined' && !document.hidden) {
-            refreshBalances();
+    const pollBlockNumber = async () => {
+      if (cancelled || (typeof document !== 'undefined' && document.hidden)) return;
+      try {
+        const latest = await publicClient.getBlockNumber();
+        if (cancelled) return;
+        setCurrentBlock((prev) => {
+          if (prev === null || latest > prev) {
+            setBlockTrigger((t) => t + 1);
+            return latest;
           }
-        }, 15000);
+          return prev;
+        });
+      } catch (err) {
+        console.warn('Block poll warning:', err);
       }
     };
 
-    const stopPolling = () => {
+    // Initial query
+    pollBlockNumber();
+
+    const startTimer = () => {
+      if (!intervalId && typeof document !== 'undefined' && !document.hidden) {
+        intervalId = setInterval(pollBlockNumber, 15000);
+      }
+    };
+
+    const stopTimer = () => {
       if (intervalId) {
         clearInterval(intervalId);
         intervalId = null;
       }
     };
 
-    const handleVisibilityChange = () => {
+    const handleVisibility = () => {
       if (typeof document !== 'undefined' && document.hidden) {
-        stopPolling();
+        stopTimer();
       } else {
-        refreshBalances();
-        startPolling();
+        pollBlockNumber();
+        startTimer();
       }
     };
 
-    startPolling();
+    startTimer();
     if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', handleVisibilityChange);
+      document.addEventListener('visibilitychange', handleVisibility);
     }
 
     return () => {
-      stopPolling();
+      cancelled = true;
+      stopTimer();
       if (typeof document !== 'undefined') {
-        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        document.removeEventListener('visibilitychange', handleVisibility);
       }
     };
-  }, [address, chainId, refreshBalances]);
+  }, [chainId, publicClient]);
+
+  // Refresh balances whenever block advances
+  useEffect(() => {
+    if (address && currentBlock) {
+      refreshBalances();
+    }
+  }, [address, currentBlock, refreshBalances]);
 
   return {
     chainId,
@@ -305,6 +378,8 @@ export function useWallet() {
     nativeBalance,
     isConnecting,
     error,
+    currentBlock,
+    blockTrigger,
     publicClient,
     getWalletClient,
     connect,
