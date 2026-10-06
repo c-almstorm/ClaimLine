@@ -519,6 +519,10 @@ export const AssetDetail: React.FC<AssetDetailProps> = ({
   const juniorRepaid = formatUnits(asset.juniorRepaid ?? 0n, 6);
   const juniorRepayOwed = formatUnits(asset.juniorRepaymentOwed ?? 0n, 6);
 
+  const totalOwed = (asset.seniorRepaymentOwed ?? 0n) + (asset.juniorRepaymentOwed ?? 0n);
+  const totalRepaid = (asset.seniorRepaid ?? 0n) + (asset.juniorRepaid ?? 0n);
+  const isFullyRepaid = totalOwed > 0n && totalRepaid >= totalOwed;
+
   return (
     <div className="space-y-6">
       {/* Overview Card */}
@@ -535,11 +539,19 @@ export const AssetDetail: React.FC<AssetDetailProps> = ({
                   asset.state === 1
                     ? 'bg-emerald-100 text-emerald-800'
                     : asset.state === 2
-                    ? 'bg-slate-100 text-slate-700'
+                    ? isFullyRepaid
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-amber-100 text-amber-800'
                     : 'bg-rose-100 text-rose-800'
                 }`}
               >
-                {asset.state === 1 ? '🟢 Open for Locks' : asset.state === 2 ? '🔒 Race Closed' : 'None'}
+                {asset.state === 1
+                  ? '🟢 Open for Locks'
+                  : asset.state === 2
+                  ? isFullyRepaid
+                    ? '✅ Fully repaid'
+                    : '🔄 Closed, repaying'
+                  : 'None'}
               </span>
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -624,7 +636,7 @@ export const AssetDetail: React.FC<AssetDetailProps> = ({
         </div>
 
         {/* Parameters Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-4 text-xs">
           <div className="p-3 bg-slate-50 rounded-xl">
             <span className="text-slate-400 block mb-0.5">Min Lock Size</span>
             <span className="font-bold text-slate-800">{formatUnits(asset.minLock ?? 0n, 6)} USDC</span>
@@ -634,15 +646,25 @@ export const AssetDetail: React.FC<AssetDetailProps> = ({
             <span className="font-bold text-slate-800">{Number(asset.lockCount ?? 0n)} / 32</span>
           </div>
           <div className="p-3 bg-slate-50 rounded-xl">
-            <span className="text-slate-400 block mb-0.5">Deadline</span>
+            <span className="text-slate-400 block mb-0.5">Lock Deadline</span>
             <span className={`font-bold ${isExpired ? 'text-rose-600' : 'text-slate-800'}`}>
               {deadlineDate.toLocaleDateString()} {deadlineDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </span>
           </div>
           <div className="p-3 bg-slate-50 rounded-xl">
+            <span className="text-slate-400 block mb-0.5">Repayment Due Date</span>
+            <span className="font-medium text-slate-600 italic">not enforced in v1</span>
+          </div>
+          <div className="p-3 bg-slate-50 rounded-xl">
             <span className="text-slate-400 block mb-0.5">Status</span>
             <span className="font-bold text-slate-800">
-              {isExpired ? 'Deadline Passed' : 'Active Escrow'}
+              {asset.state === 2
+                ? isFullyRepaid
+                  ? 'Fully repaid'
+                  : 'Closed, repaying'
+                : isExpired
+                ? 'Deadline Passed'
+                : 'Active Escrow'}
             </span>
           </div>
         </div>
@@ -763,9 +785,14 @@ export const AssetDetail: React.FC<AssetDetailProps> = ({
         {/* Repayment Action (Once closed) */}
         {asset.state === 2 && (
           <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4">
-            <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
-              <DollarSign className="w-4 h-4 text-emerald-600" />
-              <span>Repay Debt Waterfall</span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+              <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                <DollarSign className="w-4 h-4 text-emerald-600" />
+                <span>Repay Debt Waterfall</span>
+              </div>
+              <span className="text-[11px] text-slate-400 font-medium">
+                Due Date: <span className="italic text-slate-500">not enforced in v1</span>
+              </span>
             </div>
             <p className="text-xs text-slate-500">
               Repayments strictly satisfy Senior obligations before flowing to Junior tranches.

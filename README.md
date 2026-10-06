@@ -91,12 +91,63 @@ In traditional trade finance and decentralized credit, lenders face **collateral
 
 ---
 
+## 💰 How Lenders Earn
+
+Lenders in ClaimLine earn yield via **contract-enforced repayment premiums**:
+* **The Repayment Premium:** When registering an asset, the obligor commits to a repayment amount exceeding the borrowed principal (`Repayment Premium = Repayment Owed - Capacity`).
+* **Senior Tranche (Priority 1 — Lower Risk, Priority Yield):**
+  * Senior lenders enjoy first-priority lien rights over all incoming repayments.
+  * Every dollar repaid by the borrower satisfies Senior principal and premium 100% before any capital is routed to Junior lenders.
+* **Junior Tranche (Priority 2 — Subordinated, First-Loss Capital):**
+  * Junior lenders take the **first-loss position** if the borrower defaults or makes only a partial repayment.
+  * In exchange for subordinating priority to Senior lenders, Junior tranches typically offer higher repayment premiums.
+* **Pro-Rata Waterfall Distribution:** When multiple lenders participate in the same tranche, all accepted repayments are split pro-rata based on each lender's accepted principal (`(principalAccepted / totalAccepted) * repaidAmount`).
+
+---
+
+## ⚖️ Enforcement and Risks
+
+* **Repayment Is Not Enforced On-Chain:** ClaimLine is an on-chain priority settlement and debt-tracking registry. The smart contract cannot forcibly liquidate off-chain bank accounts or physical assets if an obligor fails to repay. Real-world legal recourses, UCC lien filings, credit underwriting, and off-chain recovery remain the responsibility of participating lending institutions and custodians.
+* **First-Loss Subordination Risk:** In the event of a borrower shortfall or partial repayment, the Senior tranche is satisfied first in full. Junior tranche lenders bear 100% of the initial deficit.
+* **Unaccepted Escrow Refunds:** If an asset race is oversubscribed, excess locks beyond the tranche capacity are not accepted into the loan and are returned 100% via pull-based claim without yield or penalties.
+
+---
+
+## 📊 Live Mainnet Proof-of-Execution Run
+
+The full lifecycle of ClaimLine has been executed and verified live on **Arc Mainnet** (`Chain ID 5042`) on contract [`0x6B7731c78B63C86468b0ddAE9C02432cb647d08e`](https://explorer.arc.io/address/0x6b7731c78b63c86468b0ddae9c02432cb647d08e).
+
+All transactions and decoded arguments are recorded in [`evidence/mainnet-run.json`](evidence/mainnet-run.json):
+
+| Step | Block | Event / Action | Transaction Hash | Participant | Amount / Details |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **1** | `24604906` | `AssetRegistered` | [`0xd5eeede8...75e6`](https://explorer.arc.io/tx/0xd5eeede8a96f1eb7070b187f766a8437e96bcdb4f76b31b09d1a9f65994675e6) | `0x38dB...7d6F` (Borrower) | Registered `ARC-MAINNET-SMOKE-001` (Face: 3.0 USDC, Senior Cap: 2.0 USDC @ 2.2 owed, Junior Cap: 1.0 USDC @ 1.2 owed) |
+| **2** | `24605489` | `LockPlaced` (Senior) | [`0x803b1213...1d80`](https://explorer.arc.io/tx/0x803b121366944f76480bcc7e56e8c14b05f077b9d76dee2e109d42d491611d80) | `0xCCe8...f3A8` (Lender 1) | Locked 1.50 USDC into Senior Tranche (Seq #1) |
+| **3** | `24605665` | `LockPlaced` (Senior) | [`0xb84af838...0cd3`](https://explorer.arc.io/tx/0xb84af8387757615d2176f7445acb1b659918d53b45af6b87205fe8319a5a0cd3) | `0xb20A...dFA4` (Lender 2) | Locked 1.50 USDC into Senior Tranche (Seq #2) |
+| **4** | `24605842` | `LockPlaced` (Junior) | [`0xd8d1bdca...825b`](https://explorer.arc.io/tx/0xd8d1bdcac8978dc5c515e06f0a623550c237851a29ab3eb4f8ea09825385825b) | `0xCCe8...f3A8` (Lender 1) | Locked 1.00 USDC into Junior Tranche (Seq #3) |
+| **5** | `24606087` | `AssetClosed` | [`0x4611c93e...b134`](https://explorer.arc.io/tx/0x4611c93ed830350ba4004b314abb4799d7271c3675cc90245fbf5f7d1e01b134) | `0x38dB...7d6F` (Borrower) | Race settled FIFO: Senior filled 2.0 USDC (Lender 1: 1.5, Lender 2: 0.5 + 1.0 refund), Junior filled 1.0 USDC (Lender 1: 1.0). Borrower proceeds: 3.0 USDC. |
+| **6** | `24606125` | `Claimed` (Proceeds) | [`0x770a7775...5bd3c`](https://explorer.arc.io/tx/0x770a7775700a3832ccc6660b3ce4cf01ab1621ba5783b6517180286759f5bd3c) | `0x38dB...7d6F` (Borrower) | Claimed 3.00 USDC principal loan proceeds |
+| **7** | `24606253` | `RepaymentMade` | [`0x2945233b...8768`](https://explorer.arc.io/tx/0x2945233be96c24df499f09c8f13787a7285c0a37032caaf38c38a488d54a8768) | `0x38dB...7d6F` (Borrower) | Repaid 3.00 USDC: Senior satisfied 100% (2.20 USDC), Junior partially satisfied (0.80 / 1.20 USDC owed) |
+| **8** | `24606366` | `Claimed` (Repayments) | [`0x7f26abc5...7956`](https://explorer.arc.io/tx/0x7f26abc5d435699d82c474bb0ade266a080e12f0a377189bff1764f07c567956) | `0xCCe8...f3A8` (Lender 1) | Claimed 2.45 USDC (1.65 USDC Senior payout + 0.80 USDC Junior payout) |
+| **9** | `24606480` | `Claimed` (Refund+Payout) | [`0xa2864ac1...4555`](https://explorer.arc.io/tx/0xa2864ac11256e3701414bb70ffe82582d4f5dd6f5ef5838bf5fe10e72bff4555) | `0xb20A...dFA4` (Lender 2) | Claimed 1.55 USDC (1.00 USDC unaccepted refund + 0.55 USDC Senior payout) |
+
+---
+
 ## ⚠️ Protocol Limits & Trust Assumptions
 
 1. **Repayment is Not Enforced On-Chain:** ClaimLine acts as an on-chain priority settlement registry. Real-world legal custody, physical asset possession, and debt collection remain governed by off-chain legal contracts.
 2. **Document Authenticity is Not Proven by the Registry:** The registry stores cryptographic hashes and metadata; it cannot independently verify off-chain document veracity without custodian/obligor attestations.
 3. **Rounding Dust Stays in the Contract:** Due to integer division in proportional distribution calculations, negligible dust remainders (bounded under 10 wei-units / micro-USDC) remain within the contract balance to ensure contract solvency (`balanceOf(ClaimLine) >= totalOwed`).
 4. **Non-Transferable Position Tokens in v1:** In v1, ERC-1155 tokens are non-transferable claim receipts, preventing claim accumulator desynchronization and secondary transfer race conditions.
+
+---
+
+## 🗺️ Roadmap (v1.1)
+
+* **Transferable Secondary Positions:** Support peer-to-peer ERC-1155 transfers with continuous accumulator accounting and claim checkpoints.
+* **Automated Liquidations & Collateral Oracles:** Integrate off-chain legal attestations and automated collateral liquidation triggers for delinquent obligors.
+* **Multi-Tranche Customization (Mezzanine & Equity):** Expand beyond binary Senior/Junior tranches to arbitrary multi-tier waterfalls with variable tenors.
+* **Institutional KYC / Permissioning Gates:** Optional custodian-gated compliance sidecars for institutional private credit syndications.
 
 ---
 
