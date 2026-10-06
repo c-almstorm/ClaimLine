@@ -46,7 +46,9 @@ export const Header: React.FC<HeaderProps> = ({
                 v1.0.0
               </span>
             </div>
-            <p className="text-xs text-slate-500 hidden sm:block">Lien-Priority Registry on Arc</p>
+            <p className="text-xs text-slate-500 hidden sm:block">
+              On-chain priority and repayment ledger on Arc — built so lenders know who is paid first
+            </p>
           </div>
         </div>
 

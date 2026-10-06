@@ -1,8 +1,14 @@
 # ClaimLine
 
-**ClaimLine** is a decentralized, deterministic lien-priority registry built on **Arc**, enabling transparent, verifiable, and priority-ordered debt claims against real-world assets (such as invoices, equipment, and credit receivables) settled natively in **USDC**.
+Claimline is an on-chain priority and repayment ledger for asset-backed lending on Arc, built so that lenders know who is paid first.
 
----
+### 🎯 Built For
+Lending against invoices, receipts, and receivables where several lenders share one asset. Today it settles the order of claims and splits repayments in that order. Asset verification, due dates, and default enforcement are on the roadmap.
+
+### 💎 Key Proof Points
+1. **Live on Arc Mainnet with a Recorded Run:** Deployed and operating live on Arc Mainnet (`Chain ID 5042`) with a recorded multi-party execution run covering registration, sequential senior/junior locks, FIFO capacity settlement, partial repayment, and pull-based claims ([Recorded Run Evidence](evidence/mainnet-run.json)).
+2. **Priority from Contract Execution Order with Automatic Senior-First Payouts & Refunds:** Priority is the contract's execution order on Arc. Repayments strictly satisfy Senior tranche obligations 100% before any capital flows to Junior tranches, and excess locks are refunded safely without reverts.
+3. **Native USDC Settlement:** Native 6-decimal USDC (`0x3600000000000000000000000000000000000000`) integration removes wrapped-asset bridge risks and fractional decimal mismatches.
 
 ## 💡 What ClaimLine Does & The Problem It Solves
 

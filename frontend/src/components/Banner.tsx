@@ -15,7 +15,7 @@ export const Banner: React.FC<BannerProps> = ({ activeConfig }) => {
         <div className="flex items-center gap-2 text-center sm:text-left">
           <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
           <span>
-            <strong>Experimental Protocol:</strong> Claimline is an unaudited prototype on {activeConfig.name}. Please use small test amounts only.
+            <strong>Settlement Layer Pilot:</strong> Claimline is an on-chain priority and repayment ledger for asset-backed lending on Arc, built so that lenders know who is paid first.
           </span>
         </div>
         {isDeployed ? (
