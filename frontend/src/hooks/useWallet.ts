@@ -9,8 +9,54 @@ import {
   parseUnits,
   type PublicClient,
   type WalletClient,
+  type Transport,
 } from 'viem';
 import { CHAINS_CONFIG, DEFAULT_CHAIN_ID, ERC20_ABI, CLAIMLINE_ABI } from '../config';
+
+// Custom transport wrapper that rejects any RPC endpoint whose chain ID does not match expectedChainId
+function createValidatedHttpTransport(url: string, expectedChainId: number) {
+  const baseHttp = http(url, { retryCount: 3, retryDelay: 1000 });
+  let verified = false;
+
+  return custom(
+    {
+      async request({ method, params }: { method: string; params?: any }) {
+        const httpInstance = baseHttp({ chain: undefined });
+
+        // Automatically validate chainId on first request if not already verified
+        if (!verified && method !== 'eth_chainId') {
+          const chainIdHex = (await httpInstance.request({ method: 'eth_chainId' })) as string;
+          const actualChainId =
+            typeof chainIdHex === 'string' ? parseInt(chainIdHex, 16) : Number(chainIdHex);
+          if (actualChainId !== expectedChainId) {
+            throw new Error(
+              `RPC ${url} rejected: chain ID mismatch (expected ${expectedChainId}, got ${actualChainId})`
+            );
+          }
+          verified = true;
+        }
+
+        const res = await httpInstance.request({ method, params } as any);
+
+        if (method === 'eth_chainId' && res) {
+          const actualChainId = typeof res === 'string' ? parseInt(res, 16) : Number(res);
+          if (actualChainId !== expectedChainId) {
+            throw new Error(
+              `RPC ${url} rejected: chain ID mismatch (expected ${expectedChainId}, got ${actualChainId})`
+            );
+          }
+          verified = true;
+        }
+
+        return res;
+      },
+    },
+    {
+      retryCount: 3,
+      retryDelay: 1000,
+    }
+  );
+}
 
 export function useWallet() {
   const [chainId, setChainId] = useState<number>(DEFAULT_CHAIN_ID);
@@ -22,10 +68,10 @@ export function useWallet() {
 
   const activeConfig = CHAINS_CONFIG[chainId] || CHAINS_CONFIG[DEFAULT_CHAIN_ID];
 
-  // Public Viem client using fallback transport over official public endpoints tried in order
-  // (endpoints cited from official Arc documentation: https://docs.arc.network/)
+  // Public Viem client using validated fallback transport over official public endpoints tried in order
+  // (endpoints cited from official Arc documentation: https://docs.arc.network/developers/networks)
   const rpcTransports = activeConfig.rpcUrls.default.http.map((url) =>
-    http(url, { retryCount: 3, retryDelay: 1000 })
+    createValidatedHttpTransport(url, activeConfig.id)
   );
 
   const publicClient: PublicClient = createPublicClient({

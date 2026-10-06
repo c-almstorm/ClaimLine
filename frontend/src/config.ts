@@ -3,7 +3,8 @@ import { CLAIMLINE_ABI } from './abi/ClaimLineAbi';
 
 export { CLAIMLINE_ABI };
 
-// Official public RPC endpoints cited from Arc documentation (https://docs.arc.network/)
+// Official public RPC endpoints cited from Arc documentation (https://docs.arc.network/developers/networks)
+// Verified via cast chain-id and cast code <contract>
 export const arcMainnet = defineChain({
   id: 5042,
   name: 'Arc Mainnet',
@@ -18,16 +19,12 @@ export const arcMainnet = defineChain({
       http: [
         'https://rpc.mainnet.arc.io',
         'https://rpc.drpc.mainnet.arc.io',
-        'https://rpc.blockdaemon.mainnet.arc.io',
-        'https://rpc.quicknode.mainnet.arc.io',
       ],
     },
     public: {
       http: [
         'https://rpc.mainnet.arc.io',
         'https://rpc.drpc.mainnet.arc.io',
-        'https://rpc.blockdaemon.mainnet.arc.io',
-        'https://rpc.quicknode.mainnet.arc.io',
       ],
     },
   },
@@ -49,14 +46,12 @@ export const arcTestnet = defineChain({
     default: {
       http: [
         'https://rpc.testnet.arc.io',
-        'https://rpc.drpc.testnet.arc.io',
         'https://rpc.blockdaemon.testnet.arc.io',
       ],
     },
     public: {
       http: [
         'https://rpc.testnet.arc.io',
-        'https://rpc.drpc.testnet.arc.io',
         'https://rpc.blockdaemon.testnet.arc.io',
       ],
     },

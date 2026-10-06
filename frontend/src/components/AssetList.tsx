@@ -214,20 +214,50 @@ export const AssetList: React.FC<AssetListProps> = ({
         }
       };
 
+      // Track contiguous successful block progress
+      let contiguousLastScannedBlock = cached?.lastScannedBlock ?? (fromBlock > 0n ? fromBlock - 1n : 0n);
+      const chunkStatus: { success: boolean; logs: any[]; end: bigint }[] = new Array(chunks.length);
+
       // Process in parallel batches of 3 (cut from 10 to 3)
       const BATCH_SIZE = 3;
-      const allNewLogs: any[] = [];
+      let batchError: any = null;
+
       for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
         const batch = chunks.slice(i, i + BATCH_SIZE);
-        const batchResults = await Promise.all(
-          batch.map((chunk) => fetchLogsWithRetry(chunk.start, chunk.end, 0))
-        );
-        for (const logs of batchResults) {
-          allNewLogs.push(...logs);
+        try {
+          await Promise.all(
+            batch.map(async (chunk, offset) => {
+              const chunkIdx = i + offset;
+              try {
+                const logs = await fetchLogsWithRetry(chunk.start, chunk.end, 0);
+                chunkStatus[chunkIdx] = { success: true, logs, end: chunk.end };
+              } catch (chunkErr) {
+                chunkStatus[chunkIdx] = { success: false, logs: [], end: chunk.end };
+                throw chunkErr;
+              }
+            })
+          );
+        } catch (err) {
+          batchError = err;
+          // Break immediately on batch failure to maintain contiguous progress and avoid gaps
+          break;
         }
+
         // Brief cooperative pause between batches to protect RPC rate limit capacity
         if (i + BATCH_SIZE < chunks.length) {
           await sleep(100);
+        }
+      }
+
+      // Collect logs and advance lastScannedBlock strictly through contiguous successful chunks
+      const allNewLogs: any[] = [];
+      for (let idx = 0; idx < chunks.length; idx++) {
+        if (chunkStatus[idx]?.success) {
+          contiguousLastScannedBlock = chunks[idx].end;
+          allNewLogs.push(...chunkStatus[idx].logs);
+        } else {
+          // Stop at the first uncompleted or failed chunk
+          break;
         }
       }
 
@@ -251,12 +281,18 @@ export const AssetList: React.FC<AssetListProps> = ({
       setAssets(mergedList);
       setIsRpcBusy(false);
 
-      // Cache scan progress in localStorage
-      setStoredScan(activeConfig.id, contractAddr, currentBlock, Array.from(uniqueMap.values()));
+      // Cache scan progress in localStorage only up to the contiguous successful block
+      if (contiguousLastScannedBlock > (cached?.lastScannedBlock ?? 0n)) {
+        setStoredScan(activeConfig.id, contractAddr, contiguousLastScannedBlock, Array.from(uniqueMap.values()));
+      }
 
       // Auto-select first asset if none selected
       if (!selectedAssetId && mergedList.length > 0) {
         onSelectAsset(mergedList[0].assetId);
+      }
+
+      if (batchError && allNewLogs.length === 0 && mergedList.length === 0) {
+        throw batchError;
       }
     } catch (err: any) {
       console.error('Error discovering assets from logs:', err);
