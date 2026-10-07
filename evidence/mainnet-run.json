@@ -139,5 +139,35 @@
       "juniorRepaymentAmount": "0",
       "totalClaimed": "1550000"
     }
+  },
+  {
+    "label": "Repayment Made",
+    "eventName": "RepaymentMade",
+    "transactionHash": "0x0bbeec491272c46c509006cd3c30fe68786a4fa7e1a91474d2d8334997e6969c",
+    "blockNumber": 24685592,
+    "logIndex": 2,
+    "args": {
+      "assetId": "0xec79a0f7ec7770a343729951c0d422720c8595ee909fb087645f1596f535cf0a",
+      "payer": "0x38dB3d5c71eCC1e497e1Ef7fDb3854B157d67d6F",
+      "amount": "400000",
+      "seniorRepaid": "2200000",
+      "juniorRepaid": "1200000"
+    }
+  },
+  {
+    "label": "Funds Claimed",
+    "eventName": "Claimed",
+    "transactionHash": "0xbb5424497880e3d5bd537b4b1037c0a56a9c98e268aec03aa303ba6c26d28253",
+    "blockNumber": 24685882,
+    "logIndex": 8,
+    "args": {
+      "assetId": "0xec79a0f7ec7770a343729951c0d422720c8595ee909fb087645f1596f535cf0a",
+      "account": "0xCCe86EEc9FB4983755e72b6c7b9dF35FD3E2f3A8",
+      "refundAmount": "0",
+      "proceedsAmount": "0",
+      "seniorRepaymentAmount": "0",
+      "juniorRepaymentAmount": "400000",
+      "totalClaimed": "400000"
+    }
   }
 ]

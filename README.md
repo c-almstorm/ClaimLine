@@ -104,10 +104,13 @@ Lenders in ClaimLine earn yield via **contract-enforced repayment premiums**:
 * **Senior Tranche (Priority 1 — Lower Risk, Priority Yield):**
   * Senior lenders enjoy first-priority lien rights over all incoming repayments.
   * Every dollar repaid by the borrower satisfies Senior principal and premium 100% before any capital is routed to Junior lenders.
+  * *Mainnet Run Figures:* Senior capacity was 2.00 USDC with 2.20 USDC owed (10% premium). Senior lenders received 2.20 USDC in full on the first repayment.
 * **Junior Tranche (Priority 2 — Subordinated, First-Loss Capital):**
   * Junior lenders take the **first-loss position** if the borrower defaults or makes only a partial repayment.
-  * In exchange for subordinating priority to Senior lenders, Junior tranches typically offer higher repayment premiums.
+  * In exchange for subordinating priority to Senior lenders, Junior tranches offer higher repayment premiums.
+  * *Mainnet Run Figures:* Junior capacity was 1.00 USDC with 1.20 USDC owed (20% premium). Junior received 0.80 USDC on initial repayment and the final 0.40 USDC on the borrower's top-up repayment, achieving 100% full repayment.
 * **Pro-Rata Waterfall Distribution:** When multiple lenders participate in the same tranche, all accepted repayments are split pro-rata based on each lender's accepted principal (`(principalAccepted / totalAccepted) * repaidAmount`).
+  * *Mainnet Run Figures:* In Senior tranche, Lender 1 held 1.50 USDC (75% of accepted cap) and received 1.65 USDC; Lender 2 held 0.50 USDC (25% of accepted cap) and received 0.55 USDC plus a 1.00 USDC unaccepted lock refund. In Junior tranche, Lender 1 held 1.00 USDC (100% of accepted cap) and received 1.20 USDC.
 
 ---
 
@@ -123,7 +126,7 @@ Lenders in ClaimLine earn yield via **contract-enforced repayment premiums**:
 
 The full lifecycle of ClaimLine has been executed and verified live on **Arc Mainnet** (`Chain ID 5042`) on contract [`0x6B7731c78B63C86468b0ddAE9C02432cb647d08e`](https://explorer.arc.io/address/0x6b7731c78b63c86468b0ddae9c02432cb647d08e).
 
-All transactions and decoded arguments are recorded in [`evidence/mainnet-run.json`](evidence/mainnet-run.json):
+All 11 transactions and decoded arguments are recorded in [`evidence/mainnet-run.json`](evidence/mainnet-run.json):
 
 | Step | Block | Event / Action | Transaction Hash | Participant | Amount / Details |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -133,9 +136,11 @@ All transactions and decoded arguments are recorded in [`evidence/mainnet-run.js
 | **4** | `24605842` | `LockPlaced` (Junior) | [`0xd8d1bdca...825b`](https://explorer.arc.io/tx/0xd8d1bdcac8978dc5c515e06f0a623550c237851a29ab3eb4f8ea09825385825b) | `0xCCe8...f3A8` (Lender 1) | Locked 1.00 USDC into Junior Tranche (Seq #3) |
 | **5** | `24606087` | `AssetClosed` | [`0x4611c93e...b134`](https://explorer.arc.io/tx/0x4611c93ed830350ba4004b314abb4799d7271c3675cc90245fbf5f7d1e01b134) | `0x38dB...7d6F` (Borrower) | Race settled FIFO: Senior filled 2.0 USDC (Lender 1: 1.5, Lender 2: 0.5 + 1.0 refund), Junior filled 1.0 USDC (Lender 1: 1.0). Borrower proceeds: 3.0 USDC. |
 | **6** | `24606125` | `Claimed` (Proceeds) | [`0x770a7775...5bd3c`](https://explorer.arc.io/tx/0x770a7775700a3832ccc6660b3ce4cf01ab1621ba5783b6517180286759f5bd3c) | `0x38dB...7d6F` (Borrower) | Claimed 3.00 USDC principal loan proceeds |
-| **7** | `24606253` | `RepaymentMade` | [`0x2945233b...8768`](https://explorer.arc.io/tx/0x2945233be96c24df499f09c8f13787a7285c0a37032caaf38c38a488d54a8768) | `0x38dB...7d6F` (Borrower) | Repaid 3.00 USDC: Senior satisfied 100% (2.20 USDC), Junior partially satisfied (0.80 / 1.20 USDC owed) |
+| **7** | `24606253` | `RepaymentMade` | [`0x2945233b...8768`](https://explorer.arc.io/tx/0x2945233be96c24df499f09c8f13787a7285c0a37032caaf38c38a488d54a8768) | `0x38dB...7d6F` (Borrower) | Initial repayment of 3.00 USDC: Senior satisfied 100% (2.20 USDC), Junior partially satisfied (0.80 / 1.20 USDC owed) |
 | **8** | `24606366` | `Claimed` (Repayments) | [`0x7f26abc5...7956`](https://explorer.arc.io/tx/0x7f26abc5d435699d82c474bb0ade266a080e12f0a377189bff1764f07c567956) | `0xCCe8...f3A8` (Lender 1) | Claimed 2.45 USDC (1.65 USDC Senior payout + 0.80 USDC Junior payout) |
 | **9** | `24606480` | `Claimed` (Refund+Payout) | [`0xa2864ac1...4555`](https://explorer.arc.io/tx/0xa2864ac11256e3701414bb70ffe82582d4f5dd6f5ef5838bf5fe10e72bff4555) | `0xb20A...dFA4` (Lender 2) | Claimed 1.55 USDC (1.00 USDC unaccepted refund + 0.55 USDC Senior payout) |
+| **10** | `24685592` | `RepaymentMade` (Top-Up) | [`0x0bbeec49...969c`](https://explorer.arc.io/tx/0x0bbeec491272c46c509006cd3c30fe68786a4fa7e1a91474d2d8334997e6969c) | `0x38dB...7d6F` (Borrower) | Top-up repayment of 0.40 USDC, fully completing Junior tranche obligation (1.20 / 1.20 USDC repaid; 100% full settlement) |
+| **11** | `24685882` | `Claimed` (Final Payout) | [`0xbb542449...8253`](https://explorer.arc.io/tx/0xbb5424497880e3d5bd537b4b1037c0a56a9c98e268aec03aa303ba6c26d28253) | `0xCCe8...f3A8` (Lender 1) | Claimed final 0.40 USDC Junior payout (cumulative claim: 2.85 USDC on 2.50 USDC principal) |
 
 ---
 
