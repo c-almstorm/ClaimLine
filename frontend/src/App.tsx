@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useWallet } from './hooks/useWallet';
 import { Banner } from './components/Banner';
 import { Header } from './components/Header';
@@ -6,10 +6,30 @@ import { AssetList } from './components/AssetList';
 import { AssetDetail } from './components/AssetDetail';
 import { RegisterAssetModal } from './components/RegisterAssetModal';
 import { TxModal, TxState } from './components/TxModal';
+import { LandingPage } from './components/LandingPage';
 import { CLAIMLINE_ABI } from './config';
-import { Shield, PlusCircle } from 'lucide-react';
+import { Shield, PlusCircle, ArrowLeft } from 'lucide-react';
+
+function getRouteFromLocation(): 'landing' | 'app' {
+  if (typeof window === 'undefined') return 'landing';
+  const hash = (window.location.hash || '').toLowerCase();
+  if (hash.startsWith('#/app') || hash.startsWith('#app')) {
+    return 'app';
+  }
+  return 'landing';
+}
 
 export function App() {
+  const [route, setRoute] = useState<'landing' | 'app'>(getRouteFromLocation);
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      setRoute(getRouteFromLocation());
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
   const {
     chainId,
     activeConfig,
@@ -39,6 +59,16 @@ export function App() {
     title: '',
     description: '',
   });
+
+  const handleLaunchApp = () => {
+    window.location.hash = '#/app';
+    setRoute('app');
+  };
+
+  const handleGoHome = () => {
+    window.location.hash = '#/';
+    setRoute('landing');
+  };
 
   // Action: Register Asset
   const handleRegisterAsset = async (params: {
@@ -116,6 +146,10 @@ export function App() {
     }
   };
 
+  if (route === 'landing') {
+    return <LandingPage onLaunchApp={handleLaunchApp} selectedChainId={chainId} />;
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
       {/* Top Banner */}
@@ -135,7 +169,24 @@ export function App() {
         onAddArcNetwork={addArcNetwork}
         onOpenRegisterModal={() => setIsRegisterOpen(true)}
         onRefresh={refreshBalances}
+        onGoHome={handleGoHome}
       />
+
+      {/* Breadcrumb / Navigation Bar */}
+      <div className="bg-slate-100 border-b border-slate-200 py-2 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto flex items-center justify-between text-xs">
+          <button
+            onClick={handleGoHome}
+            className="inline-flex items-center gap-1.5 text-slate-600 hover:text-blue-600 font-medium transition-colors cursor-pointer"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Back to Overview</span>
+          </button>
+          <span className="text-slate-400 font-mono">
+            dApp Workspace • {activeConfig.name}
+          </span>
+        </div>
+      </div>
 
       {/* Wallet Error Alert */}
       {walletError && (

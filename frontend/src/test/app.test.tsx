@@ -1,14 +1,29 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import App from '../App';
 import { AssetDetail } from '../components/AssetDetail';
+import { LandingPage } from '../components/LandingPage';
 import { CHAINS_CONFIG } from '../config';
 
 describe('ClaimLine Frontend Unit Tests', () => {
-  it('renders App cleanly on chain 5042 (Mainnet) with no wallet connected and empty asset list without crashing', () => {
-    // Render App on chain 5042
+  it('renders LandingPage at root / without crashing and shows all key sections', () => {
+    window.location.hash = '';
+    const { container } = render(<App />);
+
+    expect(container).toBeDefined();
+    expect(screen.getAllByText(/Claimline/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Live Settlement Layer Pilot on Arc Mainnet/i)).toBeDefined();
+    expect(screen.getByText(/Live Mainnet Proof of Execution/i)).toBeDefined();
+    expect(screen.getByText(/How ClaimLine Works/i)).toBeDefined();
+    expect(screen.getByText(/Why Arc Network\?/i)).toBeDefined();
+    expect(screen.getByText(/Limits & Roadmap/i)).toBeDefined();
+    expect(screen.getAllByText(/Launch App/i).length).toBeGreaterThan(0);
+  });
+
+  it('navigates to #/app and renders the full dApp workspace cleanly', () => {
+    window.location.hash = '#/app';
     const { container } = render(<App />);
 
     expect(container).toBeDefined();
@@ -16,6 +31,7 @@ describe('ClaimLine Frontend Unit Tests', () => {
     expect(screen.getAllByText(/Arc Mainnet/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/No Asset Selected/i)).toBeDefined();
     expect(screen.getByText(/Collateral Assets/i)).toBeDefined();
+    expect(screen.getByText(/Back to Overview/i)).toBeDefined();
   });
 
   it('renders AssetDetail with undefined / empty contract data without throwing TypeError or crashing', () => {
@@ -91,10 +107,6 @@ describe('ClaimLine Frontend Unit Tests', () => {
       }
 
       expect(idleCount).toBeLessThan(5);
-
-      console.log(
-        `Chain ${chainId} (${config.name}): Page Load = ${loadTotal} calls (Target < 30), 60s Idle = ${idleCount} calls/min (Target < 5)`
-      );
     }
   });
 });

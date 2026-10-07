@@ -13,12 +13,20 @@ import {
 } from 'viem';
 import { CHAINS_CONFIG, DEFAULT_CHAIN_ID, ERC20_ABI, CLAIMLINE_ABI, ChainConfig } from '../config';
 
-// Resolve starting chain ID in order: ?chain= URL param -> localStorage -> Default Mainnet (5042)
+// Resolve starting chain ID in order: ?chain= URL param (search or hash) -> localStorage -> Default Mainnet (5042)
 function resolveInitialChainId(): number {
   if (typeof window !== 'undefined') {
     try {
-      const urlParams = new URLSearchParams(window.location.search);
-      const chainParam = urlParams.get('chain');
+      let chainParam: string | null = null;
+      if (window.location.search) {
+        const urlParams = new URLSearchParams(window.location.search);
+        chainParam = urlParams.get('chain');
+      }
+      if (!chainParam && window.location.hash.includes('?')) {
+        const hashQuery = window.location.hash.split('?')[1];
+        const hashParams = new URLSearchParams(hashQuery);
+        chainParam = hashParams.get('chain');
+      }
       if (chainParam) {
         const lower = chainParam.toLowerCase();
         if (lower === '5042' || lower === 'mainnet' || lower === 'arc-mainnet') return 5042;
